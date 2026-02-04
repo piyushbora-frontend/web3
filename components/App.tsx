@@ -117,6 +117,49 @@ function App() {
    */
   const isAuthenticated = web3AuthProvider !== null || isConnected || address !== undefined;
 
+  /**
+   * FIX: Auto-switch to Polygon as default chain on connection
+   * 
+   * Problem: User might connect on ETH or other network by default
+   * Solution: Automatically switch to Polygon when user connects or when chainId changes
+   * This ensures Polygon is always the default chain for TopupGo
+   * 
+   * How it works:
+   * - When user connects (isAuthenticated becomes true)
+   * - Or when chainId changes and it's not Polygon
+   * - Automatically switch to Polygon silently
+   * - Only switch if user is connected and provider is available
+   */
+  useEffect(() => {
+    const autoSwitchToPolygon = async () => {
+      // Only switch if user is authenticated and provider is available
+      if (!isAuthenticated || !web3AuthProvider || !address) {
+        return;
+      }
+
+      // If already on Polygon, no need to switch
+      if (chainId === POLYGON_CHAIN_ID) {
+        return;
+      }
+
+      // Auto-switch to Polygon (silent, no user interaction needed)
+      try {
+        await switchChain({ chainId: POLYGON_CHAIN_ID });
+      } catch (err) {
+        // Silently fail - user might not have Polygon network added
+        // Or network switch might be in progress
+        console.log("Auto-switch to Polygon:", err);
+      }
+    };
+
+    // Small delay to ensure everything is initialized
+    const timer = setTimeout(() => {
+      autoSwitchToPolygon();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, chainId, web3AuthProvider, address, switchChain]);
+
   function uiConsole(...args: any[]): void {
     const el = document.querySelector("#console>p");
     if (el) {
