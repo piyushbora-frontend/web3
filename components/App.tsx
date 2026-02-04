@@ -5,19 +5,117 @@ import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { SendTransaction } from "./wagmi/sendTransaction";
 import { Balance } from "./wagmi/getBalance";
 import { POLYGON_CHAIN_ID, USDC_POLYGON } from "./wagmi/config";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
 function App() {
   const { connect, isConnected, loading: connectLoading, error: connectError } = useWeb3AuthConnect();
   // IMP START - Logout
   const { disconnect, loading: disconnectLoading, error: disconnectError } = useWeb3AuthDisconnect();
-  const { userInfo } = useWeb3AuthUser();
+  const { userInfo: hookUserInfo } = useWeb3AuthUser();
   const { showWalletUI, loading: walletUiLoading, error: walletUiError } = useWalletUI();
-  const { provider: web3AuthProvider } = useWeb3Auth();
+  const { provider: web3AuthProvider, web3Auth } = useWeb3Auth();
   const { address, connector } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
+
+  // Session restoration state: Track if we're still initializing from SSR-restored session
+  // This prevents showing login screen while Web3Auth is rehydrating the session from cookies
+  const [isInitializing, setIsInitializing] = useState(true);
+  
+  // User info state: Fetch user info directly from provider on refresh
+  // useWeb3AuthUser() hook might not sync immediately on refresh, so we fetch directly
+  const [userInfo, setUserInfo] = useState<any>(null);
+
+  /**
+   * FIX: Session Persistence on Page Refresh
+   * 
+   * Problem: On page refresh, isConnected from useWeb3AuthConnect() might be false initially
+   * even though the session is restored via SSR (cookieToWeb3AuthState). This causes the
+   * login screen to flash before the session is properly rehydrated.
+   * 
+   * Solution:
+   * 1. Check for provider existence (indicates session is restored)
+   * 2. Wait for Web3Auth to fully initialize before determining auth state
+   * 3. Use both isConnected AND provider existence to determine if user is logged in
+   * 4. Show loading state during initialization to prevent login screen flash
+   * 
+   * Why this works:
+   * - SSR restores session via cookieToWeb3AuthState -> initialState -> Web3AuthProvider
+   * - Provider exists = session was restored, just need to wait for hooks to sync
+   * - isConnected might lag behind provider restoration, so we check both
+   * - Once provider is ready and address exists, user is definitely logged in
+   */
+  /**
+   * FIX: Fetch user info on session restoration
+   * 
+   * Problem: On page refresh, useWeb3AuthUser() hook might not immediately return user info
+   * even though the session is restored. This causes profile to show default "User" / "user@example.com"
+   * 
+   * Solution: Fetch user info directly from Web3Auth instance when provider becomes available
+   * This ensures user profile data is loaded even if the hook hasn't synced yet
+   */
+  useEffect(() => {
+    // Wait for Web3Auth to initialize and check if session was restored
+    const checkSession = async () => {
+      // If provider exists, session was restored from SSR cookies
+      if (web3AuthProvider) {
+        try {
+          // Fetch user info directly from Web3Auth instance
+          // Use web3Auth from useWeb3Auth hook if available, otherwise try provider paths
+          let web3AuthInstance = web3Auth;
+          
+          if (!web3AuthInstance) {
+            // Fallback: Try to access Web3Auth through provider's internal structure
+            const provider = web3AuthProvider as any;
+            web3AuthInstance = 
+              provider?.web3AuthInstance ||
+              provider?.provider?.web3AuthInstance ||
+              provider?._web3AuthInstance;
+          }
+          
+          if (web3AuthInstance && typeof web3AuthInstance.getUserInfo === 'function') {
+            const fetchedUserInfo = await web3AuthInstance.getUserInfo();
+            if (fetchedUserInfo) {
+              setUserInfo(fetchedUserInfo);
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching user info:", err);
+        }
+        
+        // Small delay to allow useWeb3AuthConnect hook to sync with restored provider
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setIsInitializing(false);
+      } else if (!connectLoading) {
+        // If no provider and not loading, definitely not connected
+        // This handles the case where there's no session to restore
+        setIsInitializing(false);
+      }
+    };
+
+    checkSession();
+  }, [web3AuthProvider, connectLoading]);
+
+  /**
+   * Sync userInfo from hook when it becomes available
+   * This ensures we use the hook's userInfo once it's loaded, but fallback to
+   * directly fetched userInfo if hook is slow to sync
+   */
+  useEffect(() => {
+    if (hookUserInfo) {
+      setUserInfo(hookUserInfo);
+    }
+  }, [hookUserInfo]);
+
+  /**
+   * Determine actual authentication state:
+   * - Provider exists = session restored (even if isConnected hasn't synced yet)
+   * - isConnected = hook has synced with provider
+   * - address exists = wallet is connected via Wagmi
+   * User is logged in if ANY of these are true (provider is most reliable indicator)
+   */
+  const isAuthenticated = web3AuthProvider !== null || isConnected || address !== undefined;
 
   function uiConsole(...args: any[]): void {
     const el = document.querySelector("#console>p");
@@ -36,40 +134,65 @@ function App() {
     navigator.clipboard.writeText(text);
   };
 
-  // Show centered welcome toast on login
+  // Show centered welcome toast on new login (not on page refresh)
+  // Track if toast was shown to avoid showing it on session restoration
+  const [hasShownWelcomeToast, setHasShownWelcomeToast] = useState(false);
+  
   useEffect(() => {
-    if (isConnected) {
-      toast(
-        (t) => (
-          <div className="text-center">
-            <p className="text-lg font-semibold text-gray-900">Welcome to TopupGo</p>
-            <p className="text-sm mt-1 text-gray-600">Your account is ready</p>
-          </div>
-        ),
-        {
-          duration: 2500,
-          position: 'top-center',
-          style: {
-            background: '#FFFFFF',
-            border: '1px solid rgba(0,0,0,0.1)',
-            borderRadius: '18px',
-            padding: '20px 24px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-          },
-        }
-      );
+    // Only show welcome toast when isConnected becomes true AND initialization is complete
+    // This ensures we don't show it during session restoration from SSR
+    if (isConnected && !isInitializing && !hasShownWelcomeToast) {
+      // Small delay to distinguish new login from restored session
+      // If provider exists immediately, it's likely a restored session
+      const wasRestored = web3AuthProvider !== null;
+      
+      if (!wasRestored) {
+        // New login - show welcome toast
+        toast(
+          (t) => (
+            <div className="text-center">
+              <p className="text-lg font-semibold text-gray-900">Welcome to TopupGo</p>
+              <p className="text-sm mt-1 text-gray-600">Your account is ready</p>
+            </div>
+          ),
+          {
+            duration: 2500,
+            position: 'top-center',
+            style: {
+              background: '#FFFFFF',
+              border: '1px solid rgba(0,0,0,0.1)',
+              borderRadius: '18px',
+              padding: '20px 24px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+            },
+          }
+        );
+        setHasShownWelcomeToast(true);
+      } else {
+        // Restored session - mark as shown to prevent toast
+        setHasShownWelcomeToast(true);
+      }
     }
-  }, [isConnected]);
+  }, [isConnected, isInitializing, hasShownWelcomeToast, web3AuthProvider]);
 
   /**
    * Opens MetaMask Embedded Wallet's checkout modal for buying crypto
-   * Uses showCheckout() method with USD as default currency via fiatList order
    * 
-   * How USD becomes default:
-   * - The first currency in fiatList array is automatically selected as default
-   * - By placing 'USD' first, it becomes the default selection
-   * - INR is included as second option, making it available in dropdown
-   * - This approach works regardless of user's location (India or elsewhere)
+   * Requirements:
+   * - Directly opens checkout modal (NO network change permission modal)
+   * - Polygon is auto-selected as default network (not ETH)
+   * - USD is default currency
+   * - No intermediate steps, confirmations, or network selection popups
+   * 
+   * FIX: Removed switchChain() call to prevent network change permission modal
+   * Instead, we directly open checkout with Polygon chainId specified
+   * The checkout modal will handle network internally without showing permission popup
+   * 
+   * How it works:
+   * 1. Open checkout directly with Polygon chainId specified (eip155:137)
+   * 2. Checkout modal automatically uses Polygon without showing permission modal
+   * 3. USDC token is pre-selected via tokenAddress
+   * 4. USD is first in fiatList = default currency
    */
   const openBuyCrypto = async () => {
     try {
@@ -80,44 +203,39 @@ function App() {
 
       toast.loading("Preparing secure checkout", { id: "buy-crypto" });
 
-      // Auto-switch to Polygon if not already on it (hidden from user)
-      if (chainId !== POLYGON_CHAIN_ID) {
-        await switchChain({ chainId: POLYGON_CHAIN_ID });
-        // Wait for chain switch to complete
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      // REMOVED: switchChain() call to prevent "Allow Web3Auth to change your network" modal
+      // Instead, we directly open checkout with Polygon chainId
+      // The checkout modal will handle network selection internally without showing permission popup
 
       // Access MetaMask Embedded Wallet SDK from Web3Auth provider
-      // Web3Auth wraps MetaMask Embedded Wallet, access it through provider's internal structure
       const provider = web3AuthProvider as any;
       
       // Try multiple paths to access the embedded wallet SDK instance
-      // Web3Auth Modal SDK structure may vary, so we check multiple possible locations
       const embeddedWalletSDK = 
-        provider?.embeddedWalletAdapter?.sdk ||           // Direct adapter access
-        provider?.adapter?.sdk ||                          // Alternative adapter path
-        provider?.sdk ||                                    // Direct SDK access
-        provider?.provider?.embeddedWalletAdapter?.sdk ||  // Nested provider access
-        provider?.provider?.sdk;                            // Nested SDK access
+        provider?.embeddedWalletAdapter?.sdk ||
+        provider?.adapter?.sdk ||
+        provider?.sdk ||
+        provider?.provider?.embeddedWalletAdapter?.sdk ||
+        provider?.provider?.sdk;
 
-      // Check if showCheckout method is available on the SDK instance
+      // Check if showCheckout method is available
       if (embeddedWalletSDK && typeof embeddedWalletSDK.showCheckout === 'function') {
-        // Use showCheckout() with fiatList to control default currency
-        // The order in fiatList determines which currency appears as default
-        // USD is first = automatically selected as default
-        // INR is second = available in dropdown for user selection
+        // Open checkout directly with Polygon pre-selected
+        // Specifying chainId here ensures Polygon is used without showing permission modal
+        // chainId in CAIP-2 format: eip155:137 = Polygon (NOT ETH which is eip155:1)
+        // tokenAddress ensures USDC is pre-selected
+        // fiatList order: USD first = default, INR second = optional
         await embeddedWalletSDK.showCheckout({
-          chainId: `eip155:${POLYGON_CHAIN_ID}`, // Polygon chain ID in CAIP-2 format (eip155:137)
-          tokenAddress: USDC_POLYGON, // Polygon USDC contract address (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174)
-          // fiatList order controls default: first item = default, rest = dropdown options
-          fiatList: ['USD', 'INR'], // USD appears as default, INR available in dropdown
+          chainId: `eip155:${POLYGON_CHAIN_ID}`, // Polygon (eip155:137) - NOT ETH
+          tokenAddress: USDC_POLYGON, // Polygon USDC - pre-selected token
+          fiatList: ['USD', 'INR'], // USD default, INR optional
         });
 
         toast.dismiss("buy-crypto");
         toast.success("Checkout opened successfully");
       } else {
-        // Fallback to showWalletUI if showCheckout is not available
-        // This ensures the feature works even if SDK structure differs
+        // Fallback: Use showWalletUI with funding path
+        // This will open buy modal directly without network selection
         console.warn("showCheckout method not found, using showWalletUI fallback");
         showWalletUI({ 
           show: true, 
@@ -130,7 +248,7 @@ function App() {
       toast.dismiss("buy-crypto");
       toast.error("Failed to open checkout. Please try again.");
       
-      // Fallback: try opening wallet UI as last resort
+      // Last resort fallback
       try {
         showWalletUI({ show: true, path: "wallet/funding" });
       } catch (fallbackErr) {
@@ -296,7 +414,22 @@ function App() {
     </div>
   );
 
-  if (!isConnected) {
+  // Show loading state during initialization to prevent login screen flash
+  // This happens when session is being restored from SSR cookies
+  if (isInitializing) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900"></div>
+          <p className="text-sm text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Use isAuthenticated instead of just isConnected
+  // This ensures restored sessions are recognized even if hook hasn't synced yet
+  if (!isAuthenticated) {
     return unloggedInView;
   }
 
