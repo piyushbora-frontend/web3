@@ -13,3 +13,37 @@
     min-height: 100vh;
   }
 }
+
+@keyframes fadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  0% {
+    opacity: 0;
+    transform: translateX(36px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.fade-up {
+  animation: fadeUp 600ms ease-out both;
+}
+
+.slide-in {
+  animation: slideInRight 700ms ease-out both;
+}
+
+.word-fade {
+  animation: fadeUp 500ms ease-out both;
+}

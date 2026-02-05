@@ -23,7 +23,7 @@ function App() {
   // Session restoration state: Track if we're still initializing from SSR-restored session
   // This prevents showing login screen while Web3Auth is rehydrating the session from cookies
   const [isInitializing, setIsInitializing] = useState(true);
-  
+
   // User info state: Fetch user info directly from provider on refresh
   // useWeb3AuthUser() hook might not sync immediately on refresh, so we fetch directly
   const [userInfo, setUserInfo] = useState<any>(null);
@@ -65,16 +65,16 @@ function App() {
           // Fetch user info directly from Web3Auth instance
           // Use web3Auth from useWeb3Auth hook if available, otherwise try provider paths
           let web3AuthInstance = web3Auth;
-          
+
           if (!web3AuthInstance) {
             // Fallback: Try to access Web3Auth through provider's internal structure
             const provider = web3AuthProvider as any;
-            web3AuthInstance = 
+            web3AuthInstance =
               provider?.web3AuthInstance ||
               provider?.provider?.web3AuthInstance ||
               provider?._web3AuthInstance;
           }
-          
+
           if (web3AuthInstance && typeof web3AuthInstance.getUserInfo === 'function') {
             const fetchedUserInfo = await web3AuthInstance.getUserInfo();
             if (fetchedUserInfo) {
@@ -84,7 +84,7 @@ function App() {
         } catch (err) {
           console.error("Error fetching user info:", err);
         }
-        
+
         // Small delay to allow useWeb3AuthConnect hook to sync with restored provider
         await new Promise(resolve => setTimeout(resolve, 100));
         setIsInitializing(false);
@@ -181,7 +181,7 @@ function App() {
   // Show centered welcome toast on new login (not on page refresh)
   // Track if toast was shown to avoid showing it on session restoration
   const [hasShownWelcomeToast, setHasShownWelcomeToast] = useState(false);
-  
+
   useEffect(() => {
     // Only show welcome toast when isConnected becomes true AND initialization is complete
     // This ensures we don't show it during session restoration from SSR
@@ -189,7 +189,7 @@ function App() {
       // Small delay to distinguish new login from restored session
       // If provider exists immediately, it's likely a restored session
       const wasRestored = web3AuthProvider !== null;
-      
+
       if (!wasRestored) {
         // New login - show welcome toast
         toast(
@@ -302,7 +302,7 @@ function App() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 mb-6">
           {/* Left: Available Balance */}
           <Balance />
-          
+
           {/* Right: Top Up */}
           <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
             <div className="mb-4 flex items-center gap-2">
@@ -341,7 +341,7 @@ function App() {
           <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
             <SendTransaction />
           </div>
-          
+
           {/* Right: Profile */}
           <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
             <div className="mb-4 flex items-center gap-2">
@@ -391,30 +391,117 @@ function App() {
     </div>
   );
 
+  const marketingLineOne =
+    "TopupGo is your ultimate destination for instant fiat wallet top-ups with the lowest market fees. We support all major wallets, ensuring your funds are added securely and instantly.";
+  const marketingLineTwo =
+    "Stop wasting money on high transaction costs — experience the most affordable and reliable service today.";
+
+  const renderAnimatedWords = (text: string, startIndex: number) =>
+    text.split(" ").map((word, index) => (
+      <span
+        key={`${word}-${index}`}
+        className="word-fade inline-block"
+        style={{ animationDelay: `${(startIndex + index) * 55}ms` }}
+      >
+        {word}&nbsp;
+      </span>
+    ));
+
   const unloggedInView = (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="rounded-[18px] bg-white p-8 w-full max-w-md" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
-        <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-lg" style={{ backgroundColor: '#111827' }}>
-            <svg className="h-8 w-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+    <div className="min-h-screen text-slate-900">
+      <div className="grid min-h-screen w-full lg:grid-cols-2">
+        <div className="order-1 grid min-h-screen place-items-center bg-white px-6 pt-12 pb-16">
+          <div className="w-full max-w-xl">
+            <div className="mb-6 grid h-12 w-12 place-items-center rounded-full bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-4xl font-semibold leading-tight text-slate-900 sm:text-5xl">
+              Fastest Fiat
+              <span className="block text-[#4f46e5]">Wallet Top-Ups</span>
+            </h2>
+            <p className="mt-4 text-base leading-relaxed text-slate-600 sm:text-lg">
+              {renderAnimatedWords(marketingLineOne, 0)}
+            </p>
+            <p className="mt-4 text-base leading-relaxed text-slate-600 sm:text-lg">
+              {renderAnimatedWords(marketingLineTwo, marketingLineOne.split(" ").length)}
+            </p>
+
+            <div className="mt-8 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+                <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-600">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-slate-900">Instant Delivery</p>
+                <p className="mt-1 text-xs text-slate-500">Funds reflected in seconds, not business days.</p>
+              </div>
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+                <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-600">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0-1.657 1.343-3 3-3s3 1.343 3 3v1h1a1 1 0 011 1v6a1 1 0 01-1 1H7a1 1 0 01-1-1v-6a1 1 0 011-1h1v-1c0-2.761 2.239-5 5-5" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-slate-900">Secure System</p>
+                <p className="mt-1 text-xs text-slate-500">Encrypted transactions with fraud protection.</p>
+              </div>
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+                <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-600">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-slate-900">Lowest Fees</p>
+                <p className="mt-1 text-xs text-slate-500">Keep more of your money with competitive rates.</p>
+              </div>
+            </div>
           </div>
-          <h1 className="mb-2 text-2xl font-semibold text-gray-900">TopupGo</h1>
-          <p className="text-gray-600">Sign in to access your account</p>
         </div>
-        <button
-          onClick={() => connect()}
-          className="w-full rounded-lg px-6 py-3 text-base font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
-          style={{ backgroundColor: '#111827' }}
-          disabled={connectLoading}
-        >
-          {connectLoading ? "Connecting..." : "Sign In"}
-        </button>
-        {connectError && <div className="mt-4 text-center text-sm text-red-600">{connectError.message}</div>}
+
+        <div className="order-2 grid min-h-screen place-items-center bg-slate-200 px-6 pt-12 pb-16">
+          <div className="w-full max-w-md rounded-[28px] bg-white p-10 shadow-[0_28px_70px_rgba(15,23,42,0.16)]">
+            <div className="mb-8 text-center">
+              <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)]">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-semibold text-slate-900">TopupGo</h2>
+              <p className="mt-2 text-sm text-slate-600">Sign up to access your account dashboard</p>
+            </div>
+
+            <button
+              onClick={() => connect()}
+              disabled={connectLoading}
+              className="w-full rounded-xl bg-slate-900 px-6 py-3.5 text-base font-semibold text-white transition-all hover:bg-slate-800 active:scale-[0.98] disabled:opacity-60"
+            >
+              {connectLoading ? "Connecting..." : "Sign Up Now →"}
+            </button>
+
+            <p className="mt-6 text-center text-sm text-slate-600">
+              Need any help?{" "}
+              <button className="font-medium text-slate-900 underline-offset-4 hover:underline" type="button">
+                Contact Us
+              </button>
+            </p>
+
+            <div className="mt-8 border-t border-slate-100 pt-4 text-center text-[11px] uppercase tracking-[0.2em] text-slate-400">
+              Bank-grade security
+            </div>
+
+            {connectError && (
+              <div className="mt-6 rounded-xl bg-red-50 px-4 py-3 text-center text-sm text-red-600">
+                {connectError.message}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
+
 
   // Show loading state during initialization to prevent login screen flash
   // This happens when session is being restored from SSR cookies
