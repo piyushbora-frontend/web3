@@ -1,10 +1,10 @@
 "use client";
 
-import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser, useWalletUI, useWeb3Auth } from "@web3auth/modal/react";
+import { useWeb3AuthConnect, useWeb3AuthDisconnect, useWeb3AuthUser, useWalletUI, useWeb3Auth, useCheckout } from "@web3auth/modal/react";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { SendTransaction } from "./wagmi/sendTransaction";
 import { Balance } from "./wagmi/getBalance";
-import { POLYGON_CHAIN_ID, USDC_POLYGON } from "./wagmi/config";
+import { POLYGON_CHAIN_ID } from "./wagmi/config";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
@@ -14,6 +14,7 @@ function App() {
   const { disconnect, loading: disconnectLoading, error: disconnectError } = useWeb3AuthDisconnect();
   const { userInfo: hookUserInfo } = useWeb3AuthUser();
   const { showWalletUI, loading: walletUiLoading, error: walletUiError } = useWalletUI();
+  const { showCheckout, loading: checkoutLoading, error: checkoutError } = useCheckout();
   const { provider: web3AuthProvider, web3Auth } = useWeb3Auth();
   const { address, connector } = useAccount();
   const chainId = useChainId();
@@ -219,23 +220,9 @@ function App() {
   }, [isConnected, isInitializing, hasShownWelcomeToast, web3AuthProvider]);
 
   /**
-   * Opens MetaMask Embedded Wallet's checkout modal for buying crypto
-   * 
-   * Requirements:
-   * - Directly opens checkout modal (NO network change permission modal)
-   * - Polygon is auto-selected as default network (not ETH)
-   * - USD is default currency
-   * - No intermediate steps, confirmations, or network selection popups
-   * 
-   * FIX: Removed switchChain() call to prevent network change permission modal
-   * Instead, we directly open checkout with Polygon chainId specified
-   * The checkout modal will handle network internally without showing permission popup
-   * 
-   * How it works:
-   * 1. Open checkout directly with Polygon chainId specified (eip155:137)
-   * 2. Checkout modal automatically uses Polygon without showing permission modal
-   * 3. USDC token is pre-selected via tokenAddress
-   * 4. USD is first in fiatList = default currency
+   * Opens the Buy/checkout modal directly (SDK ka Buy screen) — SDK dashboard NAHI dikhata.
+   * Docs: useCheckout() → showCheckout() opens "the cryptocurrency checkout modal" directly.
+   * https://docs.metamask.io/embedded-wallets/sdk/react/hooks/useCheckout
    */
   const openBuyCrypto = async () => {
     try {
@@ -244,54 +231,24 @@ function App() {
         return;
       }
 
-      toast.loading("Preparing secure checkout", { id: "buy-crypto" });
+      toast.loading("Opening Buy…", { id: "buy-crypto" });
 
-      // REMOVED: switchChain() call to prevent "Allow Web3Auth to change your network" modal
-      // Instead, we directly open checkout with Polygon chainId
-      // The checkout modal will handle network selection internally without showing permission popup
+      // Primary: useCheckout → showCheckout = seedha Buy modal (no SDK dashboard)
+      // fiatList: sirf USD = "You Pay" USD, tokenList: sirf USDC = "You Receive" USDC (INR/USDT nahi)
+      await showCheckout({
+        show: true,
+        fiatList: ["USD"],
+        tokenList: ["USDC"],
+      });
 
-      // Access MetaMask Embedded Wallet SDK from Web3Auth provider
-      const provider = web3AuthProvider as any;
-      
-      // Try multiple paths to access the embedded wallet SDK instance
-      const embeddedWalletSDK = 
-        provider?.embeddedWalletAdapter?.sdk ||
-        provider?.adapter?.sdk ||
-        provider?.sdk ||
-        provider?.provider?.embeddedWalletAdapter?.sdk ||
-        provider?.provider?.sdk;
-
-      // Check if showCheckout method is available
-      if (embeddedWalletSDK && typeof embeddedWalletSDK.showCheckout === 'function') {
-        // Open checkout directly with Polygon pre-selected
-        // Specifying chainId here ensures Polygon is used without showing permission modal
-        // chainId in CAIP-2 format: eip155:137 = Polygon (NOT ETH which is eip155:1)
-        // tokenAddress ensures USDC is pre-selected
-        // fiatList order: USD first = default, INR second = optional
-        await embeddedWalletSDK.showCheckout({
-          chainId: `eip155:${POLYGON_CHAIN_ID}`, // Polygon (eip155:137) - NOT ETH
-          tokenAddress: USDC_POLYGON, // Polygon USDC - pre-selected token
-          fiatList: ['USD', 'INR'], // USD default, INR optional
-        });
-
-        toast.dismiss("buy-crypto");
-        toast.success("Checkout opened successfully");
-      } else {
-        // Fallback: Use showWalletUI with funding path
-        // This will open buy modal directly without network selection
-        console.warn("showCheckout method not found, using showWalletUI fallback");
-        showWalletUI({ 
-          show: true, 
-          path: "wallet/funding",
-        });
-        toast.dismiss("buy-crypto");
-      }
+      toast.dismiss("buy-crypto");
+      toast.success("Buy opened");
     } catch (err: any) {
       console.error("Error opening checkout:", err);
       toast.dismiss("buy-crypto");
-      toast.error("Failed to open checkout. Please try again.");
-      
-      // Last resort fallback
+      toast.error("Failed to open Buy. Please try again.");
+
+      // Fallback: showWalletUI with funding path (can show dashboard first)
       try {
         showWalletUI({ show: true, path: "wallet/funding" });
       } catch (fallbackErr) {
@@ -368,11 +325,13 @@ function App() {
               onClick={handleTopUp}
               className="w-full rounded-lg px-4 py-3 text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
               style={{ backgroundColor: '#111827' }}
-              disabled={walletUiLoading}
+              disabled={checkoutLoading || walletUiLoading}
             >
-              {walletUiLoading ? "Opening..." : "Top Up USD"}
+              {checkoutLoading || walletUiLoading ? "Opening Buy…" : "Top Up USD"}
             </button>
-            {walletUiError && <div className="mt-2 text-sm text-red-600">{walletUiError.message}</div>}
+            {(checkoutError || walletUiError) && (
+              <div className="mt-2 text-sm text-red-600">{(checkoutError || walletUiError)?.message}</div>
+            )}
           </div>
         </div>
 
