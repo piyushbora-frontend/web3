@@ -47,3 +47,8 @@
 .word-fade {
   animation: fadeUp 500ms ease-out both;
 }
+
+/* Hide Web3Auth wallet widget button (bottom-left bubble) */
+iframe[id^="walletIframe-"][style*="width: 70px"][style*="height: 70px"] {
+  display: none !important;
+}
