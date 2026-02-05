@@ -1,7 +1,7 @@
 "use client";
 
 import { Web3AuthProvider, type Web3AuthContextConfig } from "@web3auth/modal/react";
-import { IWeb3AuthState, WEB3AUTH_NETWORK } from "@web3auth/modal";
+import { cookieToWeb3AuthState, WEB3AUTH_NETWORK } from "@web3auth/modal";
 // IMP START - Setup Wagmi Provider
 import { WagmiProvider } from "@web3auth/modal/react/wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -72,8 +72,9 @@ function ConsoleFilter({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function Provider({ children, web3authInitialState }: 
-  { children: React.ReactNode, web3authInitialState: IWeb3AuthState | undefined }) {
+export default function Provider({ children, cookieString }:
+  { children: React.ReactNode; cookieString: string | null }) {
+  const web3authInitialState = cookieToWeb3AuthState(cookieString ?? undefined);
   return (
     <ConsoleFilter>
       {/* // IMP START - SSR */}
