@@ -62,12 +62,16 @@ function ConsoleFilter({ children }: { children: React.ReactNode }) {
         const message = args[0]?.toString() || '';
         // Suppress hCaptcha localhost warnings (harmless in development)
         if (
-          message.includes('[hCaptcha]') || 
+          message.includes('[hCaptcha]') ||
           message.includes('hCaptcha') ||
           message.includes('localhost detected') ||
           message.includes('Please use a valid host')
         ) {
-          return; // Suppress this specific warning
+          return;
+        }
+        // Suppress Web3Auth popup COOP warning (login still works; popup may navigate to Google etc.)
+        if (message.includes('Cross-Origin-Opener-Policy') && message.includes('window.closed')) {
+          return;
         }
         originalWarn.apply(console, args);
       };
@@ -77,12 +81,16 @@ function ConsoleFilter({ children }: { children: React.ReactNode }) {
         const message = args[0]?.toString() || '';
         // Suppress hCaptcha localhost errors (harmless in development)
         if (
-          message.includes('[hCaptcha]') || 
+          message.includes('[hCaptcha]') ||
           message.includes('hCaptcha') ||
           message.includes('localhost detected') ||
           message.includes('Please use a valid host')
         ) {
-          return; // Suppress this specific error
+          return;
+        }
+        // Suppress Web3Auth popup COOP warning
+        if (message.includes('Cross-Origin-Opener-Policy') && message.includes('window.closed')) {
+          return;
         }
         originalError.apply(console, args);
       };

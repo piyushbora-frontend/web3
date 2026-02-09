@@ -3,6 +3,20 @@ const fs = require("fs");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Allow Web3Auth social login popup: parent can check window.closed (fixes COOP warning)
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
+        ],
+      },
+    ];
+  },
   webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
