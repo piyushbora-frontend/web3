@@ -6,7 +6,7 @@ import { USDC_POLYGON, USDC_POLYGON_NATIVE, ERC20_ABI, normalizeAddress, POLYGON
 
 const REFRESH_INTERVAL_MS = 60 * 1000; // 1 min
 
-export function Balance({ refreshTrigger }: { refreshTrigger?: number }) {
+export function Balance({ refreshTrigger, isDarkTheme = true }: { refreshTrigger?: number; isDarkTheme?: boolean }) {
   const { address } = useAccount();
   const chainId = useChainId();
   const { provider: web3AuthProvider } = useWeb3Auth();
@@ -77,24 +77,24 @@ export function Balance({ refreshTrigger }: { refreshTrigger?: number }) {
   const usdBalanceValue = parseFloat(usdBalance).toFixed(2);
 
   return (
-    <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
-      <h2 className="text-lg font-semibold mb-4 text-gray-900">Available Balance</h2>
+    <div className={`rounded-[12px] sm:rounded-[18px] border p-4 sm:p-6 ${isDarkTheme ? 'border-white/10 bg-[#141923] shadow-[0_12px_30px_rgba(0,0,0,0.35)]' : 'border-gray-200 bg-white shadow-sm'}`}>
+      <h2 className={`mb-3 sm:mb-4 text-base sm:text-lg font-semibold ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>Available Balance</h2>
       
       {/* Loading sirf jab abhi tak balance load nahi hua; refetch pe purana balance dikhao, 0 mat dikhao */}
       {isLoading && !hasLoadedOnce && (
-        <div className="py-8 text-center text-sm text-gray-600">Loading...</div>
+        <div className={`py-6 sm:py-8 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>Loading...</div>
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+        <div className={`mb-3 sm:mb-4 rounded-lg border p-2.5 sm:p-3 text-xs sm:text-sm ${isDarkTheme ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-red-200 bg-red-50 text-red-600'}`}>
           Error: {error}
         </div>
       )}
 
       {(hasLoadedOnce || !isLoading) && !error && (
         <div>
-          <p className="text-4xl font-bold mb-2 text-gray-900">${usdBalanceValue}</p>
-          <p className="text-base font-medium text-gray-600">USD</p>
+          <p className={`mb-1.5 sm:mb-2 text-3xl sm:text-4xl font-bold ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>${usdBalanceValue}</p>
+          <p className={`text-sm sm:text-base font-medium ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>USD</p>
         </div>
       )}
     </div>

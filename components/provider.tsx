@@ -53,53 +53,33 @@ const web3AuthContextConfig: Web3AuthContextConfig = {
 // Component to suppress hCaptcha localhost warnings in development
 function ConsoleFilter({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const originalWarn = console.warn;
-      const originalError = console.error;
-      
-      // Filter console.warn
-      console.warn = (...args: any[]) => {
-        const message = args[0]?.toString() || '';
-        // Suppress hCaptcha localhost warnings (harmless in development)
-        if (
-          message.includes('[hCaptcha]') ||
-          message.includes('hCaptcha') ||
-          message.includes('localhost detected') ||
-          message.includes('Please use a valid host')
-        ) {
-          return;
-        }
-        // Suppress Web3Auth popup COOP warning (login still works; popup may navigate to Google etc.)
-        if (message.includes('Cross-Origin-Opener-Policy') && message.includes('window.closed')) {
-          return;
-        }
-        originalWarn.apply(console, args);
-      };
+    if (typeof window === "undefined" || process.env.NODE_ENV !== "development") return;
 
-      // Filter console.error for hCaptcha warnings
-      console.error = (...args: any[]) => {
-        const message = args[0]?.toString() || '';
-        // Suppress hCaptcha localhost errors (harmless in development)
-        if (
-          message.includes('[hCaptcha]') ||
-          message.includes('hCaptcha') ||
-          message.includes('localhost detected') ||
-          message.includes('Please use a valid host')
-        ) {
-          return;
-        }
-        // Suppress Web3Auth popup COOP warning
-        if (message.includes('Cross-Origin-Opener-Policy') && message.includes('window.closed')) {
-          return;
-        }
-        originalError.apply(console, args);
-      };
+    const originalWarn = console.warn;
+    const safeWarn = originalWarn.bind(console);
 
-      return () => {
-        console.warn = originalWarn;
-        console.error = originalError;
-      };
-    }
+    const shouldSuppress = (args: unknown[]) => {
+      const message = String(args[0] ?? "");
+      return (
+        message.includes("[hCaptcha]") ||
+        message.includes("hCaptcha") ||
+        message.includes("localhost detected") ||
+        message.includes("Please use a valid host") ||
+        (message.includes("Cross-Origin-Opener-Policy") && message.includes("window.closed"))
+      );
+    };
+
+    const patchedWarn: typeof console.warn = (...args: unknown[]) => {
+      if (shouldSuppress(args)) return;
+      safeWarn(...args);
+    };
+
+    console.warn = patchedWarn;
+
+    return () => {
+      // Avoid clobbering if another tool/library patched console after us.
+      if (console.warn === patchedWarn) console.warn = originalWarn;
+    };
   }, []);
 
   return <>{children}</>;

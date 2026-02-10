@@ -7,7 +7,6 @@ import { Balance } from "./wagmi/getBalance";
 import { TransactionHistorySection } from "./dashboard/TransactionHistorySection";
 import { POLYGON_CHAIN_ID } from "./wagmi/config";
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import toast from "react-hot-toast";
 import { loggedFetch } from "../lib/loggedFetch";
 
@@ -31,6 +30,8 @@ function App() {
   // useWeb3AuthUser() hook might not sync immediately on refresh, so we fetch directly
   const [userInfo, setUserInfo] = useState<any>(null);
   const [balanceRefreshTrigger, setBalanceRefreshTrigger] = useState(0);
+  const [showProfileDetails, setShowProfileDetails] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState(true);
   const handlePaymentSuccess = useCallback(() => setBalanceRefreshTrigger((n) => n + 1), []);
   const lastAccountSyncKey = useRef<string | null>(null);
   const hasCreatedAccountRef = useRef(false);
@@ -759,124 +760,160 @@ function App() {
   const handleTopUp = openBuyCrypto;
 
   const loggedInView = (
-    <div className="min-h-screen">
+    <div className={`min-h-screen ${isDarkTheme ? 'bg-[#0B0D12] text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
       {/* Top Navigation Bar */}
-      <nav className="w-full border-b" style={{ borderColor: 'rgba(0,0,0,0.08)', backgroundColor: 'rgba(255,255,255,0.5)', backdropFilter: 'blur(10px)' }}>
-        <div className="mx-auto max-w-7xl px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: '#111827' }}>
-                <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <nav className={`w-full border-b ${isDarkTheme ? 'border-white/10 bg-[#0E1118]' : 'border-gray-200 bg-white'}`}>
+        <div className="mx-auto max-w-7xl px-3 sm:px-6 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink">
+              <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg bg-[#5B5DF0] flex-shrink-0">
+                <svg className="h-4 w-4 sm:h-5 sm:w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h1 className="text-xl font-semibold" style={{ color: '#111827' }}>TopupGo</h1>
+              <div className="min-w-0">
+                <h1 className={`text-base sm:text-xl font-semibold truncate ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>TopupGo</h1>
+                <p className={`text-[10px] sm:text-[11px] uppercase tracking-[0.14em] hidden xs:block ${isDarkTheme ? 'text-gray-400' : 'text-gray-500'}`}>Dashboard</p>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 rounded-full px-3 py-1.5 border" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.2)' }}>
+            <div className="flex items-center gap-1.5 sm:gap-4 flex-shrink-0">
+              <div className={`hidden sm:flex items-center gap-2 rounded-full border px-2 sm:px-3 py-1 sm:py-1.5 ${isDarkTheme ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-emerald-200 bg-emerald-50'}`}>
                 <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                <span className="text-sm font-medium" style={{ color: '#059669' }}>Connected</span>
+                <span className={`text-xs sm:text-sm font-medium ${isDarkTheme ? 'text-emerald-300' : 'text-emerald-700'}`}>Connected</span>
+              </div>
+              <div className="sm:hidden flex items-center gap-1 rounded-full border px-1.5 py-1">
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500"></div>
               </div>
               <button
+                onClick={() => setIsDarkTheme((prev) => !prev)}
+                className={`flex items-center justify-center rounded-lg border p-1.5 sm:p-2 transition-colors ${isDarkTheme ? 'border-white/15 bg-white/5 text-gray-300 hover:bg-white/10' : 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                title={isDarkTheme ? "Switch to light theme" : "Switch to dark theme"}
+              >
+                {isDarkTheme ? (
+                  <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
+              <button
                 onClick={() => disconnect()}
-                className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:opacity-90"
-                style={{ borderColor: 'rgba(0,0,0,0.1)', color: '#111827', backgroundColor: 'rgba(255,255,255,0.8)' }}
+                className={`flex items-center gap-1 sm:gap-2 rounded-lg border px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium transition-colors ${isDarkTheme ? 'border-white/15 bg-white text-gray-900 hover:bg-gray-200' : 'border-gray-300 bg-white text-gray-900 hover:bg-gray-100'}`}
                 disabled={disconnectLoading}
               >
-                {disconnectLoading ? "Disconnecting..." : "Log Out"}
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <span className="hidden sm:inline">{disconnectLoading ? "Disconnecting..." : "Log Out"}</span>
+                <span className="sm:hidden">{disconnectLoading ? "..." : "Out"}</span>
+                <svg className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
               </button>
-              {disconnectError && <div className="text-sm text-red-600">{disconnectError.message}</div>}
+              {disconnectError && <div className="hidden sm:block text-xs sm:text-sm text-red-400">{disconnectError.message}</div>}
             </div>
           </div>
         </div>
       </nav>
 
       {/* Main Dashboard Content - 2x2 Grid */}
-      <div className="mx-auto max-w-7xl px-6 py-8">
+      <div className="mx-auto max-w-7xl px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
         {/* TOP ROW */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 mb-6">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2 mb-4 sm:mb-6">
           {/* Left: Available Balance – refresh har 1 min + payment success pe */}
-          <Balance refreshTrigger={balanceRefreshTrigger} />
+          <Balance refreshTrigger={balanceRefreshTrigger} isDarkTheme={isDarkTheme} />
 
           {/* Right: Top Up */}
-          <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
-            <div className="mb-4 flex items-center gap-2">
-              <svg className="h-5 w-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className={`rounded-[12px] sm:rounded-[18px] border p-4 sm:p-6 ${isDarkTheme ? 'border-white/10 bg-[#141923] shadow-[0_12px_30px_rgba(0,0,0,0.35)]' : 'border-gray-200 bg-white shadow-sm'}`}>
+            <div className="mb-3 sm:mb-4 flex items-center gap-2">
+              <svg className={`h-4 w-4 sm:h-5 sm:w-5 ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <h2 className="text-lg font-semibold text-gray-900">Top Up</h2>
+              <h2 className={`text-base sm:text-lg font-semibold ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>Add Funds</h2>
             </div>
-            <div className="mb-6 flex justify-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50">
-                <svg className="h-8 w-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="mb-4 sm:mb-6 flex justify-center">
+              <div className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-xl sm:rounded-2xl bg-[#5B5DF0]">
+                <svg className="h-6 w-6 sm:h-8 sm:w-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
               </div>
             </div>
-            <p className="mb-6 text-center text-sm text-gray-600">
+            <p className={`mb-4 sm:mb-6 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>
               Add funds to your TopupGo account
             </p>
             <button
               onClick={handleTopUp}
-              className="w-full rounded-lg px-4 py-3 text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: '#111827' }}
+              className={`w-full rounded-lg px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 ${isDarkTheme ? 'border border-white/15 bg-white/10 hover:bg-white/15' : 'bg-gray-900 hover:bg-gray-800'}`}
               disabled={checkoutLoading || walletUiLoading}
             >
               {checkoutLoading || walletUiLoading ? "Opening Buy…" : "Top Up USD"}
             </button>
             {(checkoutError || walletUiError) && (
-              <div className="mt-2 text-sm text-red-600">{(checkoutError || walletUiError)?.message}</div>
+              <div className="mt-2 text-sm text-red-400">{(checkoutError || walletUiError)?.message}</div>
             )}
           </div>
         </div>
 
         {/* SECOND ROW */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
           {/* Left: Send Payment */}
-          <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
-            <SendTransaction onPaymentSuccess={handlePaymentSuccess} />
+          <div className={`rounded-[12px] sm:rounded-[18px] border p-4 sm:p-6 ${isDarkTheme ? 'border-white/10 bg-[#141923] shadow-[0_12px_30px_rgba(0,0,0,0.35)]' : 'border-gray-200 bg-white shadow-sm'}`}>
+            <SendTransaction onPaymentSuccess={handlePaymentSuccess} isDarkTheme={isDarkTheme} />
           </div>
 
           {/* Right: Profile */}
-          <div className="rounded-[18px] bg-white p-6" style={{ boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
-            <div className="mb-4 flex items-center gap-2">
-              <svg className="h-5 w-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className={`rounded-[12px] sm:rounded-[18px] border p-4 sm:p-6 ${isDarkTheme ? 'border-white/10 bg-[#141923] shadow-[0_12px_30px_rgba(0,0,0,0.35)]' : 'border-gray-200 bg-white shadow-sm'}`}>
+            <div className="mb-3 sm:mb-4 flex items-center gap-2">
+              <svg className={`h-4 w-4 sm:h-5 sm:w-5 ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              <h2 className="text-lg font-semibold text-gray-900">Profile</h2>
+              <h2 className={`text-base sm:text-lg font-semibold ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>Profile</h2>
             </div>
-            <div className="mb-4 flex justify-center">
+            <div className="mb-3 sm:mb-4 flex justify-center">
               {userInfo?.profileImage ? (
                 <img
                   src={userInfo.profileImage}
                   alt="Profile"
-                  className="h-20 w-20 rounded-full object-cover ring-2 ring-gray-200"
+                  className={`h-16 w-16 sm:h-20 sm:w-20 rounded-full object-cover ring-2 ${isDarkTheme ? 'ring-[#5B5DF0]/60' : 'ring-gray-300'}`}
                 />
               ) : (
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gray-100">
-                  <svg className="h-10 w-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className={`flex h-16 w-16 sm:h-20 sm:w-20 items-center justify-center rounded-full ${isDarkTheme ? 'bg-[#0D1117]' : 'bg-gray-100'}`}>
+                  <svg className={`h-8 w-8 sm:h-10 sm:w-10 ${isDarkTheme ? 'text-gray-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
               )}
             </div>
             <div className="mb-2 text-center">
-              <p className="text-base font-semibold text-gray-900">
+              <p className={`text-sm sm:text-base font-semibold ${isDarkTheme ? 'text-white' : 'text-gray-900'}`}>
                 {userInfo?.name || "User"}
               </p>
             </div>
-            <div className="mb-4 text-center">
-              <p className="text-sm text-gray-600">
+            <div className="mb-3 sm:mb-4 text-center">
+              <p className={`text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>
                 {userInfo?.email || "user@example.com"}
               </p>
             </div>
+            <div className={`mb-3 sm:mb-4 rounded-lg sm:rounded-xl border p-3 sm:p-4 ${isDarkTheme ? 'border-white/10 bg-[#0E1118]' : 'border-gray-200 bg-gray-50'}`}>
+              <div className="space-y-2 sm:space-y-2.5 text-xs sm:text-sm">
+                <div className="flex items-center justify-between">
+                  <span className={isDarkTheme ? 'text-gray-400' : 'text-gray-500'}>Name</span>
+                  <span className={`font-medium truncate ml-2 ${isDarkTheme ? 'text-gray-100' : 'text-gray-900'}`}>{userInfo?.name || "User"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className={isDarkTheme ? 'text-gray-400' : 'text-gray-500'}>Username</span>
+                  <span className={`font-medium truncate ml-2 ${isDarkTheme ? 'text-gray-100' : 'text-gray-900'}`}>
+                    {(userInfo as any)?.username ||
+                      (userInfo as any)?.verifierId ||
+                      (userInfo?.email ? userInfo.email.split("@")[0] : "user")}
+                  </span>
+                </div>
+              </div>
+            </div>
             {/* Wallet address copy */}
             {address && (
-              <div className="flex items-center justify-center gap-2 rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2.5">
-                <span className="truncate text-xs font-medium text-gray-600" title={address}>
+              <div className={`flex items-center justify-center gap-2 rounded-lg border px-2 sm:px-3 py-2 sm:py-2.5 ${isDarkTheme ? 'border-white/10 bg-[#0E1118]' : 'border-gray-200 bg-gray-50'}`}>
+                <span className={`truncate text-[10px] sm:text-xs font-medium ${isDarkTheme ? 'text-gray-300' : 'text-gray-600'}`} title={address}>
                   {`${address.slice(0, 6)}...${address.slice(-4)}`}
                 </span>
                 <button
@@ -885,26 +922,24 @@ function App() {
                     navigator.clipboard.writeText(address);
                     toast.success('Address copied!');
                   }}
-                  className="flex-shrink-0 rounded p-1.5 text-gray-500 transition hover:bg-gray-200 hover:text-gray-700"
+                  className={`flex-shrink-0 rounded p-1 sm:p-1.5 transition ${isDarkTheme ? 'text-gray-400 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-700'}`}
                   title="Copy address"
                 >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </button>
               </div>
             )}
-            <Link
-              href="/profile"
-              className="block w-full rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-center text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
-              View Profile
-            </Link>
           </div>
         </div>
 
-        <div className="mt-6">
-          <TransactionHistorySection />
+        <div className="mt-4 sm:mt-6">
+          <TransactionHistorySection
+            refreshTrigger={balanceRefreshTrigger}
+            userEmail={userInfo?.email || hookUserInfo?.email}
+            isDarkTheme={isDarkTheme}
+          />
         </div>
       </div>
 
