@@ -4,19 +4,28 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useWeb3AuthDisconnect, useWeb3AuthUser } from "@web3auth/modal/react";
 
+const PROFILE_IMAGE_FALLBACK = "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d";
+
+function getStringField(source: unknown, key: string): string | null {
+  if (!source || typeof source !== "object") return null;
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 export default function ProfilePage() {
   const { userInfo } = useWeb3AuthUser();
   const { disconnect, loading: disconnectLoading } = useWeb3AuthDisconnect();
 
   const profile = useMemo(() => {
+    const profileImageFromSdk = getStringField(userInfo, "profileImage");
+    const image = profileImageFromSdk || PROFILE_IMAGE_FALLBACK;
     const name = userInfo?.name || "User";
     const email = userInfo?.email || "user@example.com";
-    const image = userInfo?.image || userInfo?.profileImage || "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d";
     const username =
-      (userInfo as any)?.username ||
-      (userInfo as any)?.verifierId ||
+      getStringField(userInfo, "username") ||
+      getStringField(userInfo, "verifierId") ||
       (email ? email.split("@")[0] : "user");
-    const idRaw = (userInfo as any)?.id || (userInfo as any)?.verifierId || "8F2A7C3D";
+    const idRaw = getStringField(userInfo, "id") || getStringField(userInfo, "verifierId") || "8F2A7C3D";
     const shortId = String(idRaw).replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toUpperCase();
 
     return { name, email, image, username, shortId };
