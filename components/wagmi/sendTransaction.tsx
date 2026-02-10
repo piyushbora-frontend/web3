@@ -528,7 +528,7 @@ export function SendTransaction({
           <div className="flex items-center gap-2">
             <input
               name="username"
-              placeholder="Enter PayAiro tag"
+              // placeholder="Enter PayAiro tag"
               required
               onBlur={(e) => lookupUsername((e.target as HTMLInputElement).value)}
               onChange={() => { setAddressStatus("idle"); setFetchedAddress(null); }}
@@ -566,7 +566,7 @@ export function SendTransaction({
           </label>
           <input
             name="value"
-            placeholder="Enter amount in USD"
+            // placeholder="Enter amount in USD"
             type="number"
             step="0.01"
             required
