@@ -12,6 +12,7 @@ type Transaction = {
   amount: number;
   type: PaymentType;
   status: StatusType;
+  createdAt: string | null;
 };
 
 type ApiTransaction = {
@@ -22,6 +23,11 @@ type ApiTransaction = {
   receiver_name?: string;
   sender_name?: string;
   description?: string;
+  created_at?: string | number;
+  createdAt?: string | number;
+  timestamp?: string | number;
+  transaction_date?: string | number;
+  date?: string | number;
 };
 
 const PAGE_SIZE = 10;
@@ -43,16 +49,34 @@ function mapStatus(status: string | undefined): StatusType {
   return "failed";
 }
 
+function parseTransactionDate(value: unknown): Date | null {
+  if (value === null || value === undefined) return null;
+  const parsed = new Date(value as string | number);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getTransactionDate(item: ApiTransaction): Date | null {
+  return (
+    parseTransactionDate(item.created_at) ||
+    parseTransactionDate(item.createdAt) ||
+    parseTransactionDate(item.timestamp) ||
+    parseTransactionDate(item.transaction_date) ||
+    parseTransactionDate(item.date)
+  );
+}
+
 function mapTransaction(item: ApiTransaction): Transaction {
   const type = mapPaymentType(item.transaction_type);
   const rawAmount = Number(item.amount || 0);
   const username = item.receiver_name || item.sender_name || item.description || "Unknown";
+  const transactionDate = getTransactionDate(item);
   return {
     id: String(item.id),
     username,
     amount: Number.isFinite(rawAmount) ? rawAmount : 0,
     type,
     status: mapStatus(item.status),
+    createdAt: transactionDate ? transactionDate.toISOString() : null,
   };
 }
 
@@ -111,6 +135,14 @@ function TransactionRow({ transaction, isDarkTheme = true }: { transaction: Tran
   const isSend = transaction.type === "Send";
   const amountPrefix = isSend ? "-" : "+";
   const amountColor = isSend ? (isDarkTheme ? "text-rose-400" : "text-rose-600") : (isDarkTheme ? "text-emerald-400" : "text-emerald-600");
+  const parsedDate = transaction.createdAt ? new Date(transaction.createdAt) : null;
+  const hasValidDate = !!parsedDate && !Number.isNaN(parsedDate.getTime());
+  const dateLabel = hasValidDate
+    ? new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", year: "numeric" }).format(parsedDate)
+    : "--";
+  const timeLabel = hasValidDate
+    ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(parsedDate)
+    : "--";
 
   const statusStyles: Record<StatusType, { dark: string; light: string }> = {
     completed: {
@@ -128,7 +160,7 @@ function TransactionRow({ transaction, isDarkTheme = true }: { transaction: Tran
   };
 
   return (
-    <div className={`grid min-w-[600px] sm:min-w-[760px] grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 sm:gap-4 rounded-xl sm:rounded-2xl border px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm transition ${isDarkTheme ? 'border-white/10 bg-[#0E1118] text-gray-200 hover:bg-white/5' : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'}`}>
+    <div className={`grid min-w-[720px] sm:min-w-[860px] grid-cols-[1.6fr_1fr_1fr_1fr_1.15fr] items-center gap-2 sm:gap-4 rounded-xl sm:rounded-2xl border px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm transition ${isDarkTheme ? 'border-white/10 bg-[#0E1118] text-gray-200 hover:bg-white/5' : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'}`}>
       <div className={`font-medium truncate ${isDarkTheme ? 'text-gray-100' : 'text-gray-900'}`}>{transaction.username}</div>
       <div className={`font-semibold ${amountColor}`}>
         {amountPrefix}${transaction.amount.toFixed(2)}
@@ -138,6 +170,10 @@ function TransactionRow({ transaction, isDarkTheme = true }: { transaction: Tran
         <span className={`inline-flex items-center rounded-full px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-semibold ${isDarkTheme ? statusStyles[transaction.status].dark : statusStyles[transaction.status].light}`}>
           {transaction.status}
         </span>
+      </div>
+      <div className={`leading-tight ${isDarkTheme ? "text-gray-400" : "text-gray-600"}`}>
+        <div>{dateLabel}</div>
+        <div className="text-[10px] sm:text-xs opacity-80">{timeLabel}</div>
       </div>
     </div>
   );
@@ -245,12 +281,13 @@ export function TransactionHistorySection({
 
       <div className={`rounded-xl sm:rounded-2xl border ${isDarkTheme ? 'border-white/10' : 'border-gray-200'}`}>
         <div className="max-h-[400px] sm:max-h-[520px] overflow-x-auto overflow-y-auto">
-          <div className={`sticky top-0 z-10 min-w-[600px] sm:min-w-[760px] border-b text-[10px] sm:text-xs font-semibold uppercase tracking-wide ${isDarkTheme ? 'border-white/10 bg-[#121722] text-gray-500' : 'border-gray-200 bg-slate-50 text-slate-500'}`}>
-            <div className="grid grid-cols-[1.6fr_1fr_1fr_1fr] gap-2 sm:gap-4 px-3 sm:px-5 py-2 sm:py-3">
+          <div className={`sticky top-0 z-10 min-w-[720px] sm:min-w-[860px] border-b text-[10px] sm:text-xs font-semibold uppercase tracking-wide ${isDarkTheme ? 'border-white/10 bg-[#121722] text-gray-500' : 'border-gray-200 bg-slate-50 text-slate-500'}`}>
+            <div className="grid grid-cols-[1.6fr_1fr_1fr_1fr_1.15fr] gap-2 sm:gap-4 px-3 sm:px-5 py-2 sm:py-3">
               <span>Username</span>
               <span>Amount</span>
               <span>Type</span>
               <span>Status</span>
+              <span>Time</span>
             </div>
           </div>
 

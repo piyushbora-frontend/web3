@@ -364,7 +364,8 @@ export function SendTransaction({
       return;
     }
 
-    const formData = new FormData(e.target as HTMLFormElement);
+    const formElement = e.currentTarget;
+    const formData = new FormData(formElement);
     const username = (formData.get("username") as string)?.trim();
     const amountStr = formData.get("value") as string;
     console.log("[SendTransaction] submit", { username, amountStr, from: address });
@@ -476,6 +477,12 @@ export function SendTransaction({
         onPaymentSuccess?.();
         toast.success("Payment successful!", { id: "payment" });
       }
+
+      // Reset form fields after successful on-chain payment.
+      formElement.reset();
+      setAddressStatus("idle");
+      setFetchedAddress(null);
+      setError(null);
     } catch (err: any) {
       setError(err);
       const msg = err?.message || "";
@@ -516,7 +523,7 @@ export function SendTransaction({
       <form onSubmit={submit} className="space-y-4 sm:space-y-6">
         <div>
           <label className={`mb-1.5 sm:mb-2 block text-[10px] sm:text-xs font-semibold uppercase tracking-wide ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>
-            PayAiro tag
+            Recipient ID
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -550,7 +557,7 @@ export function SendTransaction({
               </span>
             )}
           </div>
-          <p className="mt-1 text-[10px] sm:text-xs text-gray-500">Enter PayAiro tag for sending money to a PayAiro user.</p>
+          {/* <p className="mt-1 text-[10px] sm:text-xs text-gray-500">Enter PayAiro tag for sending money to a PayAiro user.</p> */}
         </div>
 
         <div>
