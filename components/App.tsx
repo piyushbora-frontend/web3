@@ -858,7 +858,12 @@ function App() {
         <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
           {/* Left: Send Payment */}
           <div className={`rounded-[12px] sm:rounded-[18px] border p-4 sm:p-6 ${isDarkTheme ? 'border-white/10 bg-[#141923] shadow-[0_12px_30px_rgba(0,0,0,0.35)]' : 'border-gray-200 bg-white shadow-sm'}`}>
-            <SendTransaction onPaymentSuccess={handlePaymentSuccess} isDarkTheme={isDarkTheme} />
+            <SendTransaction
+              onPaymentSuccess={handlePaymentSuccess}
+              isDarkTheme={isDarkTheme}
+              currentUserEmail={userInfo?.email || hookUserInfo?.email || null}
+              currentUserName={userInfo?.name || hookUserInfo?.name || null}
+            />
           </div>
 
           {/* Right: Profile */}

@@ -53,7 +53,17 @@ function extractWalletAddressFromResponse(payload: unknown): string | null {
 
 type AddressStatus = "idle" | "loading" | "found" | "error";
 
-export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPaymentSuccess?: () => void; isDarkTheme?: boolean }) {
+export function SendTransaction({
+  onPaymentSuccess,
+  isDarkTheme = true,
+  currentUserEmail,
+  currentUserName,
+}: {
+  onPaymentSuccess?: () => void;
+  isDarkTheme?: boolean;
+  currentUserEmail?: string | null;
+  currentUserName?: string | null;
+}) {
   const { provider: web3AuthProvider } = useWeb3Auth();
   const { userInfo } = useWeb3AuthUser();
   const { address } = useAccount();
@@ -143,7 +153,7 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
   }
 
   async function getAccessTokenForCurrentUser(): Promise<string | null> {
-    const email = userInfo?.email;
+    const email = (currentUserEmail || userInfo?.email || "").trim();
     if (!email) {
       console.error("[TopupGo Txn] access token fetch skipped: user email not available");
       return null;
@@ -198,21 +208,21 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
     walletAddress: string;
     recipientAddress: string;
     receiverName: string;
-  }) {
+  }): Promise<boolean> {
     if (transactionSyncInFlight.current) {
       console.log("[TopupGo Txn] SKIPPED: transaction sync already in progress");
-      return;
+      return false;
     }
 
     transactionSyncInFlight.current = true;
     try {
       const accessToken = await getAccessTokenForCurrentUser();
-      if (!accessToken) return;
+      if (!accessToken) return false;
 
       const amountNumber = Number(params.amount || 0);
       const safeAmount = Number.isFinite(amountNumber) ? amountNumber : 0;
-      const senderName = userInfo?.name || "Unknown User";
-      const senderEmail = userInfo?.email || "";
+      const senderName = currentUserName || userInfo?.name || "Unknown User";
+      const senderEmail = (currentUserEmail || userInfo?.email || "").trim();
       const receiverEmail = params.receiverName.includes("@") ? params.receiverName : "";
       const transactionPayload = {
         transaction_id: params.txHash,
@@ -254,7 +264,7 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
       if (!txRes.ok) {
         const txErrText = await txRes.text().catch(() => "");
         console.error("[TopupGo Txn] FAILED", { status: txRes.status, txErrText, transactionPayload });
-        return;
+        return false;
       }
 
       const txJson = await txRes.json().catch(() => null);
@@ -266,8 +276,11 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
       } else {
         console.warn("[TopupGo Txn] transaction id missing in create response, skipping detail GET");
       }
+
+      return true;
     } catch (syncErr) {
       console.error("[TopupGo Txn] ERROR", syncErr);
+      return false;
     } finally {
       transactionSyncInFlight.current = false;
     }
@@ -448,7 +461,7 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
       console.log("[SendTransaction] tx confirmed", { hash: tx.hash });
 
       // Sync transaction record to backend exactly once per successful on-chain transfer.
-      await syncTransactionToBackend({
+      const syncedToBackend = await syncTransactionToBackend({
         txHash: tx.hash,
         amount: amountStr,
         walletAddress: address,
@@ -456,9 +469,13 @@ export function SendTransaction({ onPaymentSuccess, isDarkTheme = true }: { onPa
         receiverName: username,
       });
 
-      // Refresh dashboard widgets instantly after successful backend sync.
-      onPaymentSuccess?.();
-      toast.success("Payment successful!", { id: "payment" });
+      if (!syncedToBackend) {
+        toast.error("Payment sent, but transaction history sync failed. Please refresh shortly.", { id: "payment" });
+      } else {
+        // Refresh dashboard widgets instantly after successful backend sync.
+        onPaymentSuccess?.();
+        toast.success("Payment successful!", { id: "payment" });
+      }
     } catch (err: any) {
       setError(err);
       const msg = err?.message || "";
