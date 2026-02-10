@@ -9,6 +9,7 @@ import { POLYGON_CHAIN_ID } from "./wagmi/config";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import toast from "react-hot-toast";
+import { loggedFetch } from "../lib/loggedFetch";
 
 function App() {
   const { connect, isConnected, loading: connectLoading, error: connectError } = useWeb3AuthConnect();
@@ -32,8 +33,16 @@ function App() {
   const [balanceRefreshTrigger, setBalanceRefreshTrigger] = useState(0);
   const handlePaymentSuccess = useCallback(() => setBalanceRefreshTrigger((n) => n + 1), []);
   const lastAccountSyncKey = useRef<string | null>(null);
+  const hasCreatedAccountRef = useRef(false);
+  const hasFetchedAccountsRef = useRef(false);
+  const accountSyncInFlight = useRef(false);
+  const lastWalletSyncKey = useRef<string | null>(null);
+  const walletSyncInFlight = useRef(false);
+  const accountSyncJustCompleted = useRef(false);
 
   const ACCOUNTS_API = "https://api.topupgo.org/api/accounts/";
+  const ACCOUNTS_EXISTS_API = "https://api.topupgo.org/api/account/exists/";
+  const WALLETS_API = "https://api.topupgo.org/api/wallets/";
   const TOPUPGO_CSRF_TOKEN = process.env.NEXT_PUBLIC_TOPUPGO_CSRF_TOKEN;
 
   /**
@@ -126,6 +135,156 @@ function App() {
    */
   const isAuthenticated = web3AuthProvider !== null || isConnected || address !== undefined;
 
+  /**
+   * Sync wallet address to backend after account creation
+   * This function sends wallet address and account info to WALLETS_API
+   * 
+   * Flow:
+   * 1. Check if accessToken and address are available
+   * 2. Prevent duplicate calls using lastWalletSyncKey
+   * 3. POST to WALLETS_API with proper headers
+   * 4. Handle errors gracefully
+   */
+  const syncWalletToBackend = async (accessToken: string, walletAddress: string, accountId?: number) => {
+    // Prevent duplicate calls - track by address only (not token, as token might change)
+    const walletSyncKey = walletAddress.toLowerCase();
+    if (lastWalletSyncKey.current === walletSyncKey) {
+      console.log("[Wallet Sync] SKIPPED: Already synced for this address", walletAddress);
+      return;
+    }
+
+    if (walletSyncInFlight.current) {
+      console.log("[Wallet Sync] SKIPPED: Sync already in progress");
+      return;
+    }
+
+    if (!accessToken || !walletAddress) {
+      console.error("[Wallet Sync] SKIPPED: Missing accessToken or walletAddress", {
+        hasAccessToken: !!accessToken,
+        hasWalletAddress: !!walletAddress,
+      });
+      return;
+    }
+
+    walletSyncInFlight.current = true;
+    lastWalletSyncKey.current = walletSyncKey;
+
+    console.log("[Wallet Sync] STARTING", {
+      walletAddress,
+      accountId: accountId || "NOT_PROVIDED",
+      hasAccessToken: !!accessToken,
+    });
+
+    try {
+      // Build payload - only include account if we have a valid accountId
+      const walletPayload: any = {
+        address: walletAddress,
+        wallet_type: "metamask_embedded",
+        balance: 0,
+      };
+
+      // Only add account field if we have a valid accountId (not 0 or undefined)
+      if (accountId && accountId > 0) {
+        walletPayload.account = accountId;
+      } else {
+        // If no accountId, backend might infer it from the token
+        // But let's try with 0 as per Postman example
+        walletPayload.account = 0;
+      }
+
+      console.log("[Wallet Sync] Payload:", JSON.stringify(walletPayload, null, 2));
+
+      const walletRes = await loggedFetch(WALLETS_API, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+        },
+        body: JSON.stringify(walletPayload),
+        logLabel: "TopupGo wallet create",
+      });
+
+      if (!walletRes.ok) {
+        // Read error response - backend might return JSON or text
+        let errorText = "";
+        let errorJson: any = null;
+        
+        try {
+          // Clone to read as text (we'll try JSON parsing on the text)
+          const clonedRes = walletRes.clone();
+          errorText = await clonedRes.text();
+          
+          // Try to parse as JSON
+          if (errorText) {
+            try {
+              errorJson = JSON.parse(errorText);
+            } catch {
+              // Not JSON, keep as text
+            }
+          }
+        } catch (err) {
+          errorText = `Status ${walletRes.status}: ${walletRes.statusText}`;
+          console.error("[Wallet Sync] Could not read error response", err);
+        }
+        
+        console.error("[Wallet Sync] ❌ FAILED - Full Error Details:", {
+          status: walletRes.status,
+          statusText: walletRes.statusText,
+          errorText: errorText,
+          errorJson: errorJson,
+          payload: walletPayload,
+          url: WALLETS_API,
+        });
+        
+        // Check if wallet already exists (might be OK)
+        const errorMessage = errorText || JSON.stringify(errorJson || {});
+        const alreadyExists =
+          walletRes.status === 400 &&
+          (errorMessage.includes("already exists") ||
+            errorMessage.includes("Wallet with this address already exists") ||
+            errorMessage.includes("duplicate") ||
+            (errorJson && (
+              String(errorJson.message || "").toLowerCase().includes("already exists") ||
+              String(errorJson.error || "").toLowerCase().includes("already exists") ||
+              String(errorJson.detail || "").toLowerCase().includes("already exists")
+            )));
+
+        if (alreadyExists) {
+          console.log("[Wallet Sync] ✅ Wallet already exists (OK) - Marking as synced", {
+            status: walletRes.status,
+            response: errorJson || errorText,
+          });
+          // Mark as synced even if it already exists
+          return;
+        }
+
+        // For other 400 errors, log detailed error but don't retry
+        console.error("[Wallet Sync] ⚠️ Validation Error - Check payload format and backend requirements", {
+          status: walletRes.status,
+          error: errorJson || errorText,
+          sentPayload: walletPayload,
+        });
+        return;
+      }
+
+      const walletJson = await walletRes.json().catch(() => null);
+      console.log("[Wallet Sync] ✅ SUCCESS", {
+        response: walletJson,
+        walletId: walletJson?.id,
+        accountId: walletJson?.account,
+      });
+    } catch (err) {
+      console.error("[Wallet Sync] EXCEPTION", err);
+      // Reset the flag on exception so it can be retried
+      walletSyncInFlight.current = false;
+      lastWalletSyncKey.current = null;
+    } finally {
+      walletSyncInFlight.current = false;
+    }
+  };
+
   useEffect(() => {
     const syncAccount = async () => {
       if (!isAuthenticated || !userInfo) return;
@@ -147,6 +306,11 @@ function App() {
 
       const syncKey = `${email}|${username}|${phoneNo}|${dateOfBirth}`;
       if (lastAccountSyncKey.current === syncKey) return;
+      if (hasCreatedAccountRef.current || accountSyncInFlight.current) return;
+      accountSyncInFlight.current = true;
+      hasCreatedAccountRef.current = true;
+      lastAccountSyncKey.current = syncKey;
+      console.log("ACCOUNT_CREATE_TRIGGERED_ONCE");
 
       const payload = {
         email,
@@ -155,12 +319,45 @@ function App() {
         first_name: firstName || "",
         last_name: lastName || "",
         date_of_birth: dateOfBirth,
-        is_verified: false,
+        is_verified: true,
       };
       console.log("[TopupGo] account details", payload);
 
       try {
-        const res = await fetch(ACCOUNTS_API, {
+        const fetchAccountId = async () => {
+          const candidates: Array<string> = [];
+          if (email) candidates.push(`${ACCOUNTS_API}?email=${encodeURIComponent(email)}`);
+          if (username) candidates.push(`${ACCOUNTS_API}?username=${encodeURIComponent(username)}`);
+
+          for (const url of candidates) {
+            try {
+              const res = await loggedFetch(url, {
+                headers: {
+                  accept: "application/json",
+                  ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+                },
+                logLabel: "TopupGo account lookup",
+              });
+              if (!res.ok) continue;
+              const data = await res.json().catch(() => null);
+              const list = Array.isArray(data)
+                ? data
+                : Array.isArray(data?.results)
+                  ? data.results
+                  : Array.isArray(data?.data)
+                    ? data.data
+                    : [];
+              const first = list[0];
+              const id = first?.id ?? first?.account?.id;
+              if (id) return id;
+            } catch {
+              // ignore and try next candidate
+            }
+          }
+          return null;
+        };
+
+        const res = await loggedFetch(ACCOUNTS_API, {
           method: "POST",
           headers: {
             accept: "application/json",
@@ -168,22 +365,253 @@ function App() {
             ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
           },
           body: JSON.stringify(payload),
+          logLabel: "TopupGo account create",
         });
 
         if (!res.ok) {
           const text = await res.text();
+          const alreadyExists =
+            res.status === 400 &&
+            (text.includes("already exists") ||
+              text.includes("Account with this email already exists") ||
+              text.includes("Account with this username already exists"));
+
+          if (alreadyExists) {
+            let accessTokenFromExists: string | null = null;
+            if (email) {
+              try {
+                const existsRes = await loggedFetch(
+                  `${ACCOUNTS_EXISTS_API}?email=${encodeURIComponent(email)}`,
+                  {
+                    headers: {
+                      accept: "application/json",
+                      ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+                    },
+                    logLabel: "TopupGo account exists",
+                  }
+                );
+                const existsJson = await existsRes.json().catch(() => null);
+                accessTokenFromExists = existsJson?.access_token ?? null;
+              } catch (err) {
+                console.error("Account exists check failed:", err);
+              }
+            }
+
+            const existingId = await fetchAccountId();
+            if (existingId) {
+              lastAccountSyncKey.current = syncKey;
+            }
+
+            if (!hasFetchedAccountsRef.current && accessTokenFromExists) {
+              hasFetchedAccountsRef.current = true;
+              console.log("ACCOUNT_GET_TRIGGERED_ONCE");
+              const listRes = await loggedFetch(ACCOUNTS_API, {
+                headers: {
+                  accept: "application/json",
+                  ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+                  Authorization: `Bearer ${accessTokenFromExists}`,
+                },
+                logLabel: "TopupGo account list (existing account)",
+              });
+              const listJson = await listRes.json().catch(() => null);
+              console.log("ACCOUNT_LIST_RESPONSE", listJson);
+            }
+
+            // Sync wallet for existing account if address is available
+            if (accessTokenFromExists && address) {
+              console.log("[Wallet Sync] Triggering for existing account");
+              // Get account ID from the list response if available
+              const listRes = await loggedFetch(ACCOUNTS_API, {
+                headers: {
+                  accept: "application/json",
+                  ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+                  Authorization: `Bearer ${accessTokenFromExists}`,
+                },
+                logLabel: "TopupGo account list (for wallet sync)",
+              }).catch(() => null);
+              
+              let accountIdForWallet: number | undefined = undefined;
+              if (listRes?.ok) {
+                const listJson = await listRes.json().catch(() => null);
+                const accountList = Array.isArray(listJson)
+                  ? listJson
+                  : Array.isArray(listJson?.results)
+                    ? listJson.results
+                    : Array.isArray(listJson?.data)
+                      ? listJson.data
+                      : [];
+                const firstAccount = accountList[0];
+                accountIdForWallet = firstAccount?.id ?? firstAccount?.account?.id;
+              }
+
+              // Sync wallet with existing account's access token
+              await syncWalletToBackend(accessTokenFromExists, address, accountIdForWallet);
+            }
+
+            return;
+          }
+
           console.error("Account sync failed:", res.status, text);
           return;
         }
 
-        lastAccountSyncKey.current = syncKey;
+        const accountJson = await res.json().catch(() => null);
+        console.log("ACCOUNT_CREATE_RESPONSE", accountJson);
+        const accountId = accountJson?.id ?? accountJson?.data?.id ?? accountJson?.account?.id;
+        const accessToken = accountJson?.access_token ?? accountJson?.data?.access_token;
+
+        if (!accessToken) {
+          console.error("ACCOUNT_CREATE_ERROR: access_token missing from response");
+          return;
+        }
+
+        // Sync wallet to backend after account creation
+        // Wait for wallet address to be available if not already
+        if (address) {
+          console.log("[Wallet Sync] Triggering after account creation");
+          accountSyncJustCompleted.current = true;
+          await syncWalletToBackend(accessToken, address, accountId);
+          // Reset flag after a delay to allow useEffect to check it
+          setTimeout(() => {
+            accountSyncJustCompleted.current = false;
+          }, 3000);
+        } else {
+          console.log("[Wallet Sync] WAITING: Wallet address not available yet, will sync when address is ready");
+        }
+
+        if (!hasFetchedAccountsRef.current) {
+          hasFetchedAccountsRef.current = true;
+          console.log("ACCOUNT_GET_TRIGGERED_ONCE");
+          const listRes = await loggedFetch(ACCOUNTS_API, {
+            headers: {
+              accept: "application/json",
+              ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+              Authorization: `Bearer ${accessToken}`,
+            },
+            logLabel: "TopupGo account list",
+          });
+          const listJson = await listRes.json().catch(() => null);
+          console.log("ACCOUNT_LIST_RESPONSE", listJson);
+        }
       } catch (err) {
         console.error("Account sync error:", err);
+      } finally {
+        accountSyncInFlight.current = false;
       }
     };
 
     syncAccount();
-  }, [isAuthenticated, userInfo]);
+  }, [isAuthenticated, userInfo, address]);
+
+  /**
+   * Separate effect to sync wallet when address becomes available
+   * This handles the case where account is created but wallet address is not yet available
+   * It also handles wallet sync on page refresh when account already exists
+   * 
+   * IMPORTANT: This only runs if wallet hasn't been synced yet (checked by lastWalletSyncKey)
+   */
+  useEffect(() => {
+    // Skip if wallet already synced for this address
+    if (address && lastWalletSyncKey.current === address.toLowerCase()) {
+      return;
+    }
+
+    // Skip if sync is in progress
+    if (walletSyncInFlight.current) {
+      return;
+    }
+
+    // Skip if account sync just completed (wallet sync will happen in account sync flow)
+    if (accountSyncJustCompleted.current) {
+      console.log("[Wallet Sync] SKIPPED: Account sync just completed, wallet sync will happen in account flow");
+      return;
+    }
+
+    const syncWalletWhenReady = async () => {
+      // Only proceed if authenticated and address is available
+      if (!isAuthenticated || !address || !userInfo) return;
+
+      // Double-check: Skip if already synced
+      if (lastWalletSyncKey.current === address.toLowerCase()) {
+        console.log("[Wallet Sync] SKIPPED: Already synced for this address (double-check)");
+        return;
+      }
+
+      // Check if we have an access token stored or can get it
+      // For existing accounts, we need to fetch access token
+      const email = userInfo?.email || "";
+      if (!email) {
+        console.log("[Wallet Sync] SKIPPED: No email in userInfo");
+        return;
+      }
+
+      // Try to get access token for existing account
+      let accessToken: string | null = null;
+      try {
+        const existsRes = await loggedFetch(
+          `${ACCOUNTS_EXISTS_API}?email=${encodeURIComponent(email)}`,
+          {
+            headers: {
+              accept: "application/json",
+              ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+            },
+            logLabel: "TopupGo account exists (for wallet sync)",
+          }
+        );
+        const existsJson = await existsRes.json().catch(() => null);
+        accessToken = existsJson?.access_token ?? null;
+      } catch (err) {
+        console.log("[Wallet Sync] Could not fetch access token, wallet sync will happen after account creation");
+        return;
+      }
+
+      if (!accessToken) {
+        console.log("[Wallet Sync] SKIPPED: No access token available");
+        return;
+      }
+
+      // Get account ID - this is important for the wallet POST API
+      let accountId: number | undefined = undefined;
+      try {
+        const listRes = await loggedFetch(ACCOUNTS_API, {
+          headers: {
+            accept: "application/json",
+            ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+            Authorization: `Bearer ${accessToken}`,
+          },
+          logLabel: "TopupGo account list (for wallet sync)",
+        });
+        if (listRes.ok) {
+          const listJson = await listRes.json().catch(() => null);
+          const accountList = Array.isArray(listJson)
+            ? listJson
+            : Array.isArray(listJson?.results)
+              ? listJson.results
+              : Array.isArray(listJson?.data)
+                ? listJson.data
+                : [];
+          const firstAccount = accountList[0];
+          accountId = firstAccount?.id ?? firstAccount?.account?.id;
+          console.log("[Wallet Sync] Fetched account ID:", accountId);
+        }
+      } catch (err) {
+        console.log("[Wallet Sync] Could not fetch account ID, will use 0 as fallback");
+      }
+
+      // Sync wallet
+      await syncWalletToBackend(accessToken, address, accountId);
+    };
+
+    // Delay to ensure account sync has completed first
+    // Only run if address is available and not already synced
+    if (address && !lastWalletSyncKey.current) {
+      const timer = setTimeout(() => {
+        syncWalletWhenReady();
+      }, 2000); // Increased delay to ensure account sync completes
+
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated, address, userInfo]);
 
   /**
    * FIX: Auto-switch to Polygon as default chain on connection
@@ -198,6 +626,8 @@ function App() {
    * - Automatically switch to Polygon silently
    * - Only switch if user is connected and provider is available
    */
+
+  
   useEffect(() => {
     const autoSwitchToPolygon = async () => {
       // Only switch if user is authenticated and provider is available
@@ -285,6 +715,7 @@ function App() {
       }
     }
   }, [isConnected, isInitializing, hasShownWelcomeToast, web3AuthProvider]);
+  
 
   /**
    * Opens the Buy/checkout modal directly (SDK ka Buy screen) — SDK dashboard NAHI dikhata.

@@ -6,6 +6,7 @@ import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
 import { useAccount } from "wagmi";
 import { USDC_POLYGON, USDC_POLYGON_NATIVE, ERC20_ABI, normalizeAddress, TOKEN_CONFIG } from "./config";
 import toast from "react-hot-toast";
+import { loggedFetch } from "../../lib/loggedFetch";
 
 const DEPOSIT_ADDRESS_API = "https://app.payairo.com/api/auth/r1/deposit-address";
 
@@ -15,9 +16,9 @@ const USDC_CONTRACTS = [
 ] as const;
 
 async function fetchDepositAddress(username: string): Promise<string> {
-  const res = await fetch(
+  const res = await loggedFetch(
     `${DEPOSIT_ADDRESS_API}/?username=${encodeURIComponent(username.trim())}`,
-    { headers: { Accept: "application/json" } }
+    { headers: { Accept: "application/json" }, logLabel: "PayAiro deposit address" }
   );
   const json = await res.json();
   if (json?.status && json?.data?.deposit_address) return json.data.deposit_address;
