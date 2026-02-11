@@ -915,7 +915,7 @@ function App() {
                 </div>
               </div>
             </div>
-            {/* Wallet address copy
+            {/* Wallet address copy */}
             {address && (
               <div className={`flex items-center justify-center gap-2 rounded-lg border px-2 sm:px-3 py-2 sm:py-2.5 ${isDarkTheme ? 'border-white/10 bg-[#0E1118]' : 'border-gray-200 bg-gray-50'}`}>
                 <span className={`truncate text-[10px] sm:text-xs font-medium ${isDarkTheme ? 'text-gray-300' : 'text-gray-600'}`} title={address}>
@@ -936,7 +936,6 @@ function App() {
                 </button>
               </div>
             )}
-            */}
           </div>
         </div>
 
