@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loggedFetch } from "../../lib/loggedFetch";
 
-type PaymentType = "Send" | "Receive" | "Topup";
+type PaymentType = "send" | "receive";
 type StatusType = "completed" | "pending" | "failed";
 
 type Transaction = {
@@ -22,6 +22,8 @@ type ApiTransaction = {
   status?: string;
   receiver_name?: string;
   sender_name?: string;
+  receiver_email?: string;
+  sender_email?: string;
   description?: string;
   created_at?: string | number;
   createdAt?: string | number;
@@ -34,12 +36,22 @@ const PAGE_SIZE = 10;
 const TOPUPGO_ACCOUNT_EXISTS_API = "https://api.topupgo.org/api/account/exists/";
 const TOPUPGO_TRANSACTIONS_API = "https://api.topupgo.org/api/transactions/";
 const TOPUPGO_CSRF_TOKEN = process.env.NEXT_PUBLIC_TOPUPGO_CSRF_TOKEN;
+const TRANSACTION_POLL_INTERVAL_MS = 15000;
+const CACHE_TTL_MS = 10000;
+
+type TransactionCacheEntry = {
+  rows: ApiTransaction[];
+  fetchedAt: number;
+};
+
+// Module-level cache/deduping helps avoid duplicate API calls in React StrictMode remounts.
+const transactionCache = new Map<string, TransactionCacheEntry>();
+const inFlightTransactionRequests = new Map<string, Promise<ApiTransaction[]>>();
 
 function mapPaymentType(transactionType: string | undefined): PaymentType {
   const value = String(transactionType || "").toLowerCase();
-  if (value === "debit" || value === "send") return "Send";
-  if (value === "credit" || value === "receive") return "Receive";
-  return "Topup";
+  if (value === "debit" || value === "send") return "send";
+  return "receive";
 }
 
 function mapStatus(status: string | undefined): StatusType {
@@ -65,8 +77,25 @@ function getTransactionDate(item: ApiTransaction): Date | null {
   );
 }
 
-function mapTransaction(item: ApiTransaction): Transaction {
-  const type = mapPaymentType(item.transaction_type);
+function resolveTransactionType(item: ApiTransaction, normalizedUserEmail: string): PaymentType {
+  const senderEmail = String(item.sender_email || "").trim().toLowerCase();
+  const receiverEmail = String(item.receiver_email || "").trim().toLowerCase();
+
+  if (normalizedUserEmail) {
+    if (receiverEmail && receiverEmail === normalizedUserEmail) return "receive";
+    if (senderEmail && senderEmail === normalizedUserEmail) return "send";
+  }
+
+  return mapPaymentType(item.transaction_type);
+}
+
+function formatDisplayAmount(amount: number): string {
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(safeAmount);
+}
+
+function mapTransaction(item: ApiTransaction, normalizedUserEmail: string): Transaction {
+  const type = resolveTransactionType(item, normalizedUserEmail);
   const rawAmount = Number(item.amount || 0);
   const username = item.receiver_name || item.sender_name || item.description || "Unknown";
   const transactionDate = getTransactionDate(item);
@@ -78,6 +107,74 @@ function mapTransaction(item: ApiTransaction): Transaction {
     status: mapStatus(item.status),
     createdAt: transactionDate ? transactionDate.toISOString() : null,
   };
+}
+
+async function fetchTransactionsByEmail(email: string, force = false): Promise<ApiTransaction[]> {
+  const now = Date.now();
+  const cached = transactionCache.get(email);
+  if (!force && cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.rows;
+  }
+
+  const inFlight = inFlightTransactionRequests.get(email);
+  if (inFlight) return inFlight;
+
+  const requestPromise = (async () => {
+    const tokenRes = await loggedFetch(
+      `${TOPUPGO_ACCOUNT_EXISTS_API}?email=${encodeURIComponent(email)}`,
+      {
+        headers: {
+          accept: "application/json",
+          ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+        },
+        logLabel: "TopupGo transaction history token",
+      }
+    );
+
+    if (!tokenRes.ok) {
+      const errorText = await tokenRes.text().catch(() => "");
+      throw new Error(`Could not fetch transaction history token. (${tokenRes.status}) ${errorText}`);
+    }
+
+    const tokenJson = await tokenRes.json().catch(() => null);
+    const accessToken = tokenJson?.access_token ?? null;
+    if (!accessToken) {
+      throw new Error("Could not fetch transaction history token.");
+    }
+
+    const response = await loggedFetch(TOPUPGO_TRANSACTIONS_API, {
+      headers: {
+        accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
+      },
+      logLabel: "TopupGo transactions list",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`Failed to fetch transactions. (${response.status}) ${errorText}`);
+    }
+
+    const json = await response.json().catch(() => null);
+    const list: ApiTransaction[] = Array.isArray(json)
+      ? json
+      : Array.isArray(json?.results)
+        ? json.results
+        : Array.isArray(json?.data)
+          ? json.data
+          : [];
+
+    transactionCache.set(email, { rows: list, fetchedAt: Date.now() });
+    return list;
+  })();
+
+  inFlightTransactionRequests.set(email, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    inFlightTransactionRequests.delete(email);
+  }
 }
 
 function Pagination({
@@ -132,7 +229,7 @@ function Pagination({
 }
 
 function TransactionRow({ transaction, isDarkTheme = true }: { transaction: Transaction; isDarkTheme?: boolean }) {
-  const isSend = transaction.type === "Send";
+  const isSend = transaction.type === "send";
   const amountPrefix = isSend ? "-" : "+";
   const amountColor = isSend ? (isDarkTheme ? "text-rose-400" : "text-rose-600") : (isDarkTheme ? "text-emerald-400" : "text-emerald-600");
   const parsedDate = transaction.createdAt ? new Date(transaction.createdAt) : null;
@@ -163,7 +260,7 @@ function TransactionRow({ transaction, isDarkTheme = true }: { transaction: Tran
     <div className={`grid min-w-[720px] sm:min-w-[860px] grid-cols-[1.6fr_1fr_1fr_1fr_1.15fr] items-center gap-2 sm:gap-4 rounded-xl sm:rounded-2xl border px-3 sm:px-5 py-2 sm:py-3 text-xs sm:text-sm transition ${isDarkTheme ? 'border-white/10 bg-[#0E1118] text-gray-200 hover:bg-white/5' : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50'}`}>
       <div className={`font-medium truncate ${isDarkTheme ? 'text-gray-100' : 'text-gray-900'}`}>{transaction.username}</div>
       <div className={`font-semibold ${amountColor}`}>
-        {amountPrefix}${transaction.amount.toFixed(2)}
+        {amountPrefix}${formatDisplayAmount(transaction.amount)}
       </div>
       <div className={`truncate ${isDarkTheme ? 'text-gray-400' : 'text-gray-600'}`}>{transaction.type}</div>
       <div>
@@ -191,77 +288,78 @@ export function TransactionHistorySection({
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  const rowsRef = useRef<Transaction[]>([]);
+
+  const normalizedEmail = useMemo(() => userEmail?.trim().toLowerCase() || "", [userEmail]);
+
+  const loadTransactions = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!normalizedEmail) return;
+      const force = Boolean(options?.force);
+    const requestId = ++latestRequestIdRef.current;
+
+      setError(null);
+      const hasExistingRows = rowsRef.current.length > 0;
+      const loadedBefore = hasLoadedOnceRef.current;
+      if (!loadedBefore && !hasExistingRows) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+
+      try {
+        const rawRows = await fetchTransactionsByEmail(normalizedEmail, force);
+        const nextRows = rawRows.map((item) => mapTransaction(item, normalizedEmail));
+        if (requestId !== latestRequestIdRef.current) return;
+
+        rowsRef.current = nextRows;
+        hasLoadedOnceRef.current = true;
+        setRows(nextRows);
+        setHasLoadedOnce(true);
+        setPage((prevPage) => {
+          const nextTotalPages = Math.max(1, Math.ceil(nextRows.length / PAGE_SIZE));
+          return Math.min(prevPage, nextTotalPages);
+        });
+      } catch (err) {
+        if (requestId !== latestRequestIdRef.current) return;
+        console.error("[TransactionHistory] fetch error", err);
+        const message = err instanceof Error && err.message ? err.message : "Failed to fetch transactions.";
+        setError(message);
+      } finally {
+        if (requestId !== latestRequestIdRef.current) return;
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [normalizedEmail]
+  );
 
   useEffect(() => {
-    const email = userEmail?.trim();
-    if (!email) return;
+    if (!normalizedEmail) return;
+    const cached = transactionCache.get(normalizedEmail);
+    if (cached) {
+      const cachedRows = cached.rows.map((item) => mapTransaction(item, normalizedEmail));
+      rowsRef.current = cachedRows;
+      hasLoadedOnceRef.current = true;
+      setRows(cachedRows);
+      setHasLoadedOnce(true);
+      setIsLoading(false);
+    }
+    void loadTransactions({ force: true });
+  }, [normalizedEmail, refreshTrigger, loadTransactions]);
 
-    let cancelled = false;
-    const loadTransactions = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const tokenRes = await loggedFetch(
-          `${TOPUPGO_ACCOUNT_EXISTS_API}?email=${encodeURIComponent(email)}`,
-          {
-            headers: {
-              accept: "application/json",
-              ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
-            },
-            logLabel: "TopupGo transaction history token",
-          }
-        );
-        const tokenJson = await tokenRes.json().catch(() => null);
-        const accessToken = tokenJson?.access_token ?? null;
-        if (!accessToken) {
-          if (!cancelled) setError("Could not fetch transaction history token.");
-          return;
-        }
-
-        const response = await loggedFetch(TOPUPGO_TRANSACTIONS_API, {
-          headers: {
-            accept: "application/json",
-            Authorization: `Bearer ${accessToken}`,
-            ...(TOPUPGO_CSRF_TOKEN ? { "X-CSRFTOKEN": TOPUPGO_CSRF_TOKEN } : {}),
-          },
-          logLabel: "TopupGo transactions list",
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
-          console.error("[TransactionHistory] list failed", { status: response.status, errorText });
-          if (!cancelled) setError("Failed to fetch transactions.");
-          return;
-        }
-
-        const json = await response.json().catch(() => null);
-        const list: ApiTransaction[] = Array.isArray(json)
-          ? json
-          : Array.isArray(json?.results)
-            ? json.results
-            : Array.isArray(json?.data)
-              ? json.data
-              : [];
-        if (!cancelled) {
-          setRows(list.map(mapTransaction));
-          setPage(1);
-        }
-      } catch (err) {
-        console.error("[TransactionHistory] fetch error", err);
-        if (!cancelled) setError("Failed to fetch transactions.");
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    loadTransactions();
-    const interval = setInterval(loadTransactions, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [refreshTrigger, userEmail]);
+  useEffect(() => {
+    if (!normalizedEmail) return;
+    const interval = setInterval(() => {
+      void loadTransactions();
+    }, TRANSACTION_POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [normalizedEmail, loadTransactions]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
 
@@ -292,14 +390,27 @@ export function TransactionHistorySection({
           </div>
 
           <div className="flex flex-col gap-2 sm:gap-3 px-2 sm:px-3 py-3 sm:py-4">
-            {isLoading && <div className={`py-6 sm:py-8 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-500'}`}>Loading transactions...</div>}
-            {!isLoading && error && <div className={`py-6 sm:py-8 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-red-300' : 'text-red-500'}`}>{error}</div>}
-            {!isLoading && !error && currentRows.length === 0 && (
+            {isLoading && rows.length === 0 && (
+              <div className={`py-6 sm:py-8 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-500'}`}>
+                Loading transactions...
+              </div>
+            )}
+            {error && (
+              <div className={`rounded-lg px-3 py-2 text-center text-xs sm:text-sm ${isDarkTheme ? 'border border-red-500/30 bg-red-500/10 text-red-300' : 'border border-red-200 bg-red-50 text-red-600'}`}>
+                {error}
+              </div>
+            )}
+            {!isLoading && hasLoadedOnce && !error && currentRows.length === 0 && (
               <div className={`py-6 sm:py-8 text-center text-xs sm:text-sm ${isDarkTheme ? 'text-gray-400' : 'text-gray-500'}`}>No transactions found.</div>
             )}
-            {!isLoading && !error && currentRows.map((transaction) => (
+            {currentRows.map((transaction) => (
               <TransactionRow key={transaction.id} transaction={transaction} isDarkTheme={isDarkTheme} />
             ))}
+            {isRefreshing && rows.length > 0 && (
+              <div className={`pt-1 text-center text-[10px] sm:text-xs ${isDarkTheme ? "text-gray-500" : "text-gray-400"}`}>
+                Refreshing transactions...
+              </div>
+            )}
           </div>
         </div>
       </div>

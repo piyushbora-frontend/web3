@@ -11,6 +11,7 @@ import { loggedFetch } from "../../lib/loggedFetch";
 const DEPOSIT_ADDRESS_API = "https://app.payairo.com/api/auth/r1/deposit-address";
 const AGENT_BY_ENS_API = "https://app.payairo.com/api/auth/r1/agent-by-ens/";
 const ENS_CREDIT_API = "https://app.payairo.com/api/wallet/credit-balance-by-ens/";
+const ENS_EMAIL_BY_NAME_API = "https://app.payairo.com/api/auth/email-by-ens-name/";
 const TOPUPGO_TRANSACTIONS_API = "https://api.topupgo.org/api/transactions/";
 const TOPUPGO_ACCOUNTS_EXISTS_API = "https://api.topupgo.org/api/account/exists/";
 const TOPUPGO_WALLETS_API = "https://api.topupgo.org/api/wallets/";
@@ -52,6 +53,14 @@ function extractWalletAddressFromResponse(payload: unknown): string | null {
 }
 
 type AddressStatus = "idle" | "loading" | "found" | "error";
+type EnsEmailLookupResponse = {
+  status?: boolean;
+  message?: string;
+  data?: {
+    email?: string;
+    ens_name?: string;
+  };
+};
 
 export function SendTransaction({
   onPaymentSuccess,
@@ -208,6 +217,7 @@ export function SendTransaction({
     walletAddress: string;
     recipientAddress: string;
     receiverName: string;
+    receiverEmail?: string;
   }): Promise<boolean> {
     if (transactionSyncInFlight.current) {
       console.log("[TopupGo Txn] SKIPPED: transaction sync already in progress");
@@ -223,8 +233,8 @@ export function SendTransaction({
       const safeAmount = Number.isFinite(amountNumber) ? amountNumber : 0;
       const senderName = currentUserName || userInfo?.name || "Unknown User";
       const senderEmail = (currentUserEmail || userInfo?.email || "").trim();
-      const receiverEmail = params.receiverName.includes("@") ? params.receiverName : "";
-      const transactionPayload = {
+      const receiverEmail = (params.receiverEmail || "").trim();
+      const transactionPayload: Record<string, unknown> = {
         transaction_id: params.txHash,
         amount: safeAmount,
         fee: 0,
@@ -236,7 +246,6 @@ export function SendTransaction({
         sender_name: senderName,
         receiver_name: params.receiverName,
         sender_email: senderEmail,
-        receiver_email: receiverEmail,
         sender_type: "send",
         metadata: {
           order_id: params.txHash,
@@ -246,8 +255,15 @@ export function SendTransaction({
           receiver_wallet: params.recipientAddress,
         },
       };
+      if (receiverEmail) {
+        transactionPayload.receiver_email = receiverEmail;
+      }
 
-      console.log("[TopupGo Txn] REQUEST payload", transactionPayload);
+      console.log("[TopupGo Txn] REQUEST payload prepared", {
+        txHash: params.txHash,
+        receiverName: params.receiverName,
+        hasReceiverEmail: Boolean(receiverEmail),
+      });
 
       const txRes = await loggedFetch(TOPUPGO_TRANSACTIONS_API, {
         method: "POST",
@@ -263,7 +279,7 @@ export function SendTransaction({
 
       if (!txRes.ok) {
         const txErrText = await txRes.text().catch(() => "");
-        console.error("[TopupGo Txn] FAILED", { status: txRes.status, txErrText, transactionPayload });
+        console.error("[TopupGo Txn] FAILED", { status: txRes.status, txErrText, txHash: params.txHash });
         return false;
       }
 
@@ -356,6 +372,33 @@ export function SendTransaction({
     }
   }
 
+  async function resolveReceiverEmailForTransaction(receiverIdentifier: string): Promise<string | undefined> {
+    const normalizedReceiver = receiverIdentifier.trim();
+    if (!normalizedReceiver.toLowerCase().endsWith(".sol")) {
+      return undefined;
+    }
+
+    try {
+      const res = await loggedFetch(
+        `${ENS_EMAIL_BY_NAME_API}?ens_name=${encodeURIComponent(normalizedReceiver)}`,
+        {
+          headers: { accept: "application/json" },
+          logLabel: "PayAiro email-by-ens-name",
+        }
+      );
+
+      const json = (await res.json().catch(() => null)) as EnsEmailLookupResponse | null;
+      const resolvedEmail = String(json?.data?.email || "").trim();
+      if (!res.ok || !json?.status || !resolvedEmail) {
+        throw new Error("Could not resolve receiver email for ENS name.");
+      }
+
+      return resolvedEmail;
+    } catch (err) {
+      throw new Error("Could not resolve receiver email for ENS name.");
+    }
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!web3AuthProvider || !address) {
@@ -410,6 +453,7 @@ export function SendTransaction({
     toast.loading("Sending payment…", { id: "payment" });
 
     try {
+      const receiverEmail = await resolveReceiverEmailForTransaction(username);
       const normalizedRecipient = normalizeAddress(recipientAddress);
       const amountInUnits = parseUnits(amountStr, TOKEN_CONFIG.decimals);
       console.log("[SendTransaction] resolved recipient", {
@@ -468,6 +512,7 @@ export function SendTransaction({
         walletAddress: address,
         recipientAddress: normalizedRecipient,
         receiverName: username,
+        receiverEmail,
       });
 
       if (!syncedToBackend) {
@@ -488,6 +533,8 @@ export function SendTransaction({
       const msg = err?.message || "";
       if (msg.toLowerCase().includes("ens credit")) {
         toast.error(msg || "ENS credit failed. Payment aborted.", { id: "payment" });
+      } else if (msg.toLowerCase().includes("could not resolve receiver email")) {
+        toast.error("Could not resolve receiver email for the provided .sol name.", { id: "payment" });
       } else if (msg.includes("429") || msg.includes("Too Many Requests")) {
         toast.error("Too many requests. Please wait a moment and try again.", { id: "payment" });
       } else if (msg.includes("transfer amount exceeds balance")) {
@@ -528,7 +575,7 @@ export function SendTransaction({
           <div className="flex items-center gap-2">
             <input
               name="username"
-              // placeholder="Enter PayAiro tag"
+              placeholder="Enter Pay tag"
               required
               onBlur={(e) => lookupUsername((e.target as HTMLInputElement).value)}
               onChange={() => { setAddressStatus("idle"); setFetchedAddress(null); }}
@@ -566,7 +613,7 @@ export function SendTransaction({
           </label>
           <input
             name="value"
-            // placeholder="Enter amount in USD"
+            placeholder="Enter amount in USD"
             type="number"
             step="0.01"
             required
