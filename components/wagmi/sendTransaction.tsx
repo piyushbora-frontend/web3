@@ -81,6 +81,8 @@ export function SendTransaction({
   const [isPending, setIsPending] = useState(false);
   const [addressStatus, setAddressStatus] = useState<AddressStatus>("idle");
   const [fetchedAddress, setFetchedAddress] = useState<string | null>(null);
+  const [isReceiverPayiroUser, setIsReceiverPayiroUser] = useState<boolean | null>(null);
+  const [receiverValidationMessage, setReceiverValidationMessage] = useState<string | null>(null);
   const [showUserNotFoundModal, setShowUserNotFoundModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const transactionSyncInFlight = useRef(false);
@@ -307,23 +309,43 @@ export function SendTransaction({
     if (!u) {
       setAddressStatus("idle");
       setFetchedAddress(null);
+      setIsReceiverPayiroUser(null);
+      setReceiverValidationMessage(null);
       return;
     }
     setAddressStatus("loading");
     setFetchedAddress(null);
+    setIsReceiverPayiroUser(null);
+    setReceiverValidationMessage(null);
     try {
       const resolvedAddress = await resolveWalletAddress(u);
       if (!resolvedAddress) {
         setFetchedAddress(null);
         setAddressStatus("error");
+        setIsReceiverPayiroUser(false);
+        setReceiverValidationMessage("user not found");
         setShowUserNotFoundModal(true);
+        return;
+      }
+      const isPayiroUser = await isPayiroUserFromExistingApiResponse(u, {
+        resolvedRecipientAddress: resolvedAddress,
+      });
+      if (!isPayiroUser) {
+        setFetchedAddress(null);
+        setAddressStatus("error");
+        setIsReceiverPayiroUser(false);
+        setReceiverValidationMessage("user not found");
         return;
       }
       setFetchedAddress(resolvedAddress);
       setAddressStatus("found");
+      setIsReceiverPayiroUser(true);
+      setReceiverValidationMessage(null);
     } catch {
       setFetchedAddress(null);
       setAddressStatus("error");
+      setIsReceiverPayiroUser(false);
+      setReceiverValidationMessage("Unable to verify user. Please try again.");
       setShowUserNotFoundModal(true);
     }
   }
@@ -399,6 +421,78 @@ export function SendTransaction({
     }
   }
 
+  async function resolveSolIdentityFromExistingApi(
+    receiverIdentifier: string
+  ): Promise<{ email: string; identifier: string } | null> {
+    const normalizedReceiver = receiverIdentifier.trim();
+    if (!normalizedReceiver.toLowerCase().endsWith(".sol")) return null;
+
+    try {
+      const res = await loggedFetch(
+        `${ENS_EMAIL_BY_NAME_API}?ens_name=${encodeURIComponent(normalizedReceiver)}`,
+        {
+          headers: { accept: "application/json" },
+          logLabel: "PayAiro .sol identity validation (existing API)",
+        }
+      );
+      if (!res.ok) return null;
+
+      const json = (await res.json().catch(() => null)) as EnsEmailLookupResponse | null;
+      const email = String(json?.data?.email || "").trim();
+      const identifier =
+        String(json?.data?.ens_name || "").trim() ||
+        getValueByPath(json, ["data", "username"]) ||
+        getValueByPath(json, ["data", "identifier"]) ||
+        getValueByPath(json, ["response", "data", "data", "username"]) ||
+        "";
+
+      if (!json?.status || !email || !identifier) return null;
+      return { email, identifier: String(identifier).trim() };
+    } catch {
+      return null;
+    }
+  }
+
+  async function isPayiroUserFromExistingApiResponse(
+    receiverIdentifier: string,
+    options?: { resolvedReceiverEmail?: string; resolvedRecipientAddress?: string }
+  ): Promise<boolean> {
+    const normalizedReceiver = receiverIdentifier.trim();
+    if (!normalizedReceiver) return false;
+    const lowerReceiver = normalizedReceiver.toLowerCase();
+
+    // Keep existing .sol flow working: if ENS resolves to email (or wallet already resolved),
+    // treat it as a valid PayAiro receiver only when API returns BOTH email and identifier.
+    if (lowerReceiver.endsWith(".sol")) {
+      const solIdentity = await resolveSolIdentityFromExistingApi(normalizedReceiver);
+      if (solIdentity?.email && solIdentity?.identifier) return true;
+      return false;
+    }
+
+    try {
+      const res = await loggedFetch(
+        `${DEPOSIT_ADDRESS_API}/?username=${encodeURIComponent(normalizedReceiver)}`,
+        { headers: { Accept: "application/json" }, logLabel: "PayAiro receiver validation (existing API)" }
+      );
+      if (!res.ok) return false;
+
+      const json = await res.json().catch(() => null);
+      const receiverName =
+        getValueByPath(json, ["data", "name"]) ||
+        getValueByPath(json, ["data", "user", "name"]) ||
+        getValueByPath(json, ["response", "data", "data", "name"]);
+      const receiverIdentifierFromApi =
+        getValueByPath(json, ["data", "username"]) ||
+        getValueByPath(json, ["data", "identifier"]) ||
+        getValueByPath(json, ["response", "data", "data", "username"]);
+      const receiverWalletAddress = extractWalletAddressFromResponse(json);
+
+      return Boolean(json?.status && receiverWalletAddress && (receiverName || receiverIdentifierFromApi));
+    } catch {
+      return false;
+    }
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!web3AuthProvider || !address) {
@@ -455,6 +549,13 @@ export function SendTransaction({
     try {
       const receiverEmail = await resolveReceiverEmailForTransaction(username);
       const normalizedRecipient = normalizeAddress(recipientAddress);
+      const isPayiroUser = await isPayiroUserFromExistingApiResponse(username, {
+        resolvedReceiverEmail: receiverEmail,
+        resolvedRecipientAddress: normalizedRecipient,
+      });
+      if (!isPayiroUser) {
+        throw new Error("NOT_PAYIRO_USER");
+      }
       const amountInUnits = parseUnits(amountStr, TOKEN_CONFIG.decimals);
       console.log("[SendTransaction] resolved recipient", {
         username,
@@ -531,7 +632,9 @@ export function SendTransaction({
     } catch (err: any) {
       setError(err);
       const msg = err?.message || "";
-      if (msg.toLowerCase().includes("ens credit")) {
+      if (msg.includes("NOT_PAYIRO_USER")) {
+        toast.error("This is not Payiro user", { id: "payment" });
+      } else if (msg.toLowerCase().includes("ens credit")) {
         toast.error(msg || "ENS credit failed. Payment aborted.", { id: "payment" });
       } else if (msg.toLowerCase().includes("could not resolve receiver email")) {
         toast.error("Could not resolve receiver email for the provided .sol name.", { id: "payment" });
@@ -578,7 +681,12 @@ export function SendTransaction({
               placeholder="Enter Pay tag"
               required
               onBlur={(e) => lookupUsername((e.target as HTMLInputElement).value)}
-              onChange={() => { setAddressStatus("idle"); setFetchedAddress(null); }}
+              onChange={() => {
+                setAddressStatus("idle");
+                setFetchedAddress(null);
+                setIsReceiverPayiroUser(null);
+                setReceiverValidationMessage(null);
+              }}
               className={`w-full rounded-lg border px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm transition-all ${isDarkTheme ? 'border-white/10 bg-[#0E1118] text-white placeholder-gray-500 focus:border-[#5B5DF0] focus:outline-none' : 'border-gray-200 bg-white text-gray-900 placeholder-gray-400 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-200'}`}
             />
             {addressStatus === "loading" && (
@@ -604,6 +712,11 @@ export function SendTransaction({
               </span>
             )}
           </div>
+          {receiverValidationMessage && (
+            <p className={`mt-1 text-[10px] sm:text-xs ${isDarkTheme ? 'text-rose-300' : 'text-rose-600'}`}>
+              {receiverValidationMessage}
+            </p>
+          )}
           {/* <p className="mt-1 text-[10px] sm:text-xs text-gray-500">Enter PayAiro tag for sending money to a PayAiro user.</p> */}
         </div>
 
@@ -622,7 +735,7 @@ export function SendTransaction({
         </div>
         
         <button
-          disabled={isPending || isConfirming}
+          disabled={isPending || isConfirming || isReceiverPayiroUser === false}
           type="submit"
           className={`w-full rounded-lg px-4 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isDarkTheme ? 'bg-white text-gray-900 hover:bg-gray-200' : 'bg-gray-900 text-white hover:bg-gray-800'}`}
         >
@@ -680,7 +793,7 @@ export function SendTransaction({
         )}
 
       {/* Center modal: This PayAiro user not found */}
-      {showUserNotFoundModal && (
+      {/* {showUserNotFoundModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => setShowUserNotFoundModal(false)}
@@ -711,7 +824,7 @@ export function SendTransaction({
             </button>
           </div>
         </div>
-      )}
+      )} */}
     </div>
   )
 }
